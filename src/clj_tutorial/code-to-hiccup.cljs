@@ -13,13 +13,16 @@
 ;; Styles
 ;;==============================================
 
+(def form->id 
+  (comp :token-id meta))
+
 (defn add-id
 
   ([form]
    (add-id form {}))
 
   ([form style]
-   (assoc style :id (:token-id (meta form)))))
+   (assoc style :id (form->id form))))
 
 (defn add-x-y [x y]
   
@@ -47,7 +50,8 @@
         cl (add-x-y (dec end-col) end-row)
 
         [op cl] (map (fn [s]
-                       (assoc s :id (:token-id (meta form))))
+                       (assoc s :id
+                              () (form->id form)))
                      [op cl])]
 
     [op cl]))

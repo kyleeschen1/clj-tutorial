@@ -71,7 +71,7 @@
 ;; Standard Macros
 ;;------------------------------------
 ;; Macros currently work like f-expressions,
-;; and expand by the f-expand multimethod. 
+;; and expand by f-expand. 
 ;;
 ;; Currently, they are: cond, when, and, or
 
@@ -252,7 +252,6 @@
   (record-bindings! {sym val} :globals)
   
   (swap! *global-vars* assoc sym val))
-
 (defn get-var
   [sym]
   (when *global-vars*
@@ -542,15 +541,14 @@
                            (fn [_ & rst]
                              (cons 'fn rst)))
         
-        [fnames methods] (map split-fnames bindings)
-
-        bindings* (interleave bindings methods)
+        bindings* (->> bindings
+                       (map split-fnames)
+                       (concat))
         
         env* (add-binding-to-env env fnames ::self)
         env* (add-sequential-binds bindings* env)]
 
     (evaluate body env*)))
-
 
 
 (defmethod -evaluate-sexpr 'fn

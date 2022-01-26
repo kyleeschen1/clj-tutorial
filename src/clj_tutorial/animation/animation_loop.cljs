@@ -28,7 +28,7 @@
 (defn block
 
   "Blocks animation loop
-   until CSS animations comeplete."
+   until CSS animations complete."
 
   [f & args]
   
@@ -49,8 +49,10 @@
 ;;################################################################################
 
 (defn animate
-  [& args]
-  :form)
+  
+  [state config]
+
+  )
 
 ;;################################################################################
 ;; Run Animation Loop
@@ -83,8 +85,8 @@
 
       (when (continue? 100 state)
 
-        ;; (<! (block animate state config))
-        (<! (timeout (:pause-time @config)))
+        (<! (block animate state config))
+      ;;  (<! (timeout (:pause-time @config)))
 
         (pprint state)
         
