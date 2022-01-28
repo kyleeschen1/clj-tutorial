@@ -61,122 +61,13 @@
 (def repl-left-margin
   (+ 50 sidebar-width text-width))
 
-
-(defn text->divs
-  [text]
-  (->> text
-       (map (fn [[div text]]
-              (let [id (str (gensym))]     
-                [div {:id id} text])))
-       (into [:span#text])))
-
-(def text
-  (text->divs
-   
-   [[:h1 "Introduction"]
-    
-    [:h1 "Syntax"]
-    [:p "The history and mystery"]
-    [:h2 "Arithmetic"]
-    [:h2 "Lists"]
-    [:h2 "Conditionals"]
-    [:h2 "Bindings"]
-    [:h2 "Functions"]
-    [:p "I love lambdas..."]
-    
-    [:h1 "Recursion"]
-    [:h2 "Basic Examples"]
-    [:h3 "Sum"]
-    [:h3 "Multiply"]
-    [:h3 "Exponentiate"]
-    [:h3 "Factorial"]
-    [:h2 "Functions Over Lists"]
-    [:h3 "Count"]
-    [:h3 "Member?"]
-    [:h3 "Replace"]
-    [:h3 "Nth"]
-    [:h3 "Reverse"]
-    [:h3 "Append"]
-    [:h2 "Higher Order Functions"]
-    [:h3 "Map"]
-    [:h3 "Walk"]
-    [:h3 "Filter"]
-    [:h3 "Reduce"]
-    [:h2 "Searching and Sorting"]
-    [:h3 "Bubble Sort"]
-    [:h3 "Quicksort"]
-    [:h2 "Conclusion"]
-    
-    [:h1 "The Meta-Circular Interpreter"]
-    [:h2 "The Eval / Apply Loop"]
-    [:h2 "S-Expressions"]
-    [:h2 "Symbols & Environment"]
-    [:h2 "Conditionals"]
-    [:h2 "Functions"]
-    [:p "Why would we even do this?"]
-    
-    [:h1 "The Y-Combinator"]]))
-
 ;;#######################################################
 ;; Text Compiler
 ;;#######################################################
 
-(def text*
-   
-  [[:h1 "Introduction"]
 
-   
-   
-   [:h1 "Syntax"]
-   [:p "The history and mystery"]
-   [:h2 "Arithmetic"]
-   [:h2 "Lists"]
-   [:h2 "Conditionals"]
-   [:h2 "Bindings"]
-   [:h2 "Functions"]
-   [:p "I love lambdas..."]
 
-   '(add-code 'factorial
 
-              (defn factorial [n]
-                (if (zero? n)
-                  1
-                  (* n (factorial n)))))
-   
-   [:h1 "Recursion"]
-   [:h2 "Basic Examples"]
-   [:h3 "Sum"]
-   [:h3 "Multiply"]
-   [:h3 "Exponentiate"]
-   [:h3 "Factorial"]
-   [:h2 "Functions Over Lists"]
-   [:h3 "Count"]
-   [:h3 "Member?"]
-   [:h3 "Replace"]
-   [:h3 "Nth"]
-   [:h3 "Reverse"]
-   [:h3 "Append"]
-   [:h2 "Higher Order Functions"]
-   [:h3 "Map"]
-   [:h3 "Walk"]
-   [:h3 "Filter"]
-   [:h3 "Reduce"]
-   [:h2 "Searching and Sorting"]
-   [:h3 "Bubble Sort"]
-   [:h3 "Quicksort"]
-   [:h2 "Conclusion"]
-   
-   [:h1 "The Meta-Circular Interpreter"]
-   [:h2 "The Eval / Apply Loop"]
-   [:h2 "S-Expressions"]
-   [:h2 "Symbols & Environment"]
-   [:h2 "Conditionals"]
-   [:h2 "Functions"]
-   [:p "Why would we even do this?"]
-   
-   [:h1 "The Y-Combinator"]])
-
-;;(def ^:dynamic data)
 
 ;;#######################################################
 ;; Adding Ids, Values, Display Info
@@ -186,7 +77,7 @@
 
 (defn const?
   [form]
-  (instance? Const val))
+  (instance? Const form))
 
 (defn token?
   [form]
@@ -210,11 +101,11 @@
             (let [display (when-not (coll? code)
                             (str code))
                   
-                  code (if (satisfies? IMeta code)
+                  code* (if (satisfies? IMeta code)
                           code
                           (Const. code))]
               
-              (with-meta code {:id (gensym "token_")
+              (with-meta code* {:id (gensym "token_")
                                :form code
                                :display display})))]
 
@@ -261,7 +152,7 @@
         
         v (if else
             
-            (conj v [::newline else])
+            (into v [::newline else])
             
             v)]
 
@@ -297,8 +188,9 @@
          (interleave body (repeat ::newline))))
 
 (defmethod add-newlines-&-indents 'defn
-  [[op fname sym params & body]]
+  [[op fname params & body]]
   (list* op
+         fname
          params
          ::newline
          ::indent
@@ -338,24 +230,41 @@
 ;; Building D3 Data from Code
 ;;#######################################################
 
-(declare coll->d3-data
-         tag-token
-         tag-coll
-         add-bracket-data)
+(declare form->d3-data*
+         coll->d3-data
+         gen-token-data
+         gen-coll-data
+         gen-bracket-data)
+
+(def spaces-per-indent 1.5)
+(def space-between-tokens 1)
+(def space-after-opening-bracket 0.5)
+(def space-before-closing-bracket 0.5)
 
 (defn form->d3-data
-  
   ([form]
-   
-   (form->d3-data form 0 0 []))
-  
-  ([form x y data]
-   
-   (if (token? form)
-     
-     (tag-token form x y)
 
-     (coll->d3-data form x y data))))
+   (form->d3-data form 0 0 []))
+
+  ([form x y]
+   (form->d3-data form x y []))
+
+  ([form x y acc]
+   
+   (let [form (cons 'do form)]
+     
+     (form->d3-data* form x y acc))))
+
+
+(defn form->d3-data*
+ 
+  [form x y data]
+  
+  (if (token? form)
+    
+    (gen-token-data form x y)
+
+    (coll->d3-data form x y data)))
      
 (defn coll->d3-data
   
@@ -365,8 +274,8 @@
         
         [x-original y-original] [x y]
 
-        ;; Increment to adjust for the opening bracket
-        x (inc x)]
+        ;; Adjust for the opening bracket
+        x (+ x 1 space-after-opening-bracket)]
 
     (loop [[e & es :as elements] form-w-newlines-&-indents
            x x
@@ -377,27 +286,26 @@
       (cond
 
         (not (seq elements))
-        (let [{:keys [x-end y-end]} (last data)
+        (let [{:keys [x-end y-end] :or {x x-original y y-original}} (last data)
 
               ;; create bracket data
-              brackets (add-bracket-data form
-                                           x-original
-                                           y-original
-                                           x-end
-                                           y-end)
-
-             
+              [op cl] (gen-bracket-data form
+                                   x-original
+                                   y-original
+                                   x-end
+                                   y-end)
               
-              ;; Increment to adjust for outer bracket
-              x-end (inc x-end) ]
+              ;; Adjust for closing bracket
+              x-end (+ x-end space-between-tokens space-before-closing-bracket)
+              
+              ;; crate coll data
+              coll-data (gen-coll-data form
+                                       x-original
+                                       y-original
+                                       x-end
+                                       y-end) ]
           
-          (conj data
-               ;; (conj brackets)
-                (tag-coll form
-                          x-original
-                          y-original
-                          x-end
-                          y-end)))
+          (conj data op cl coll-data))
         
         (= e ::newline)
         (recur es
@@ -408,13 +316,13 @@
 
         (= e ::indent)
         (recur es
-               (inc x)
+               (+ x spaces-per-indent)
                y
-               (inc indent)
+               (+ indent spaces-per-indent)
                data)
 
         :else
-        (let [element-data (form->d3-data e x y data)
+        (let [element-data (form->d3-data* e x y data)
 
               [final-frame data] (if (vector? element-data)
                                    
@@ -427,7 +335,7 @@
               {:keys [x-end y-end]} final-frame
 
               ;; Increment to adjust for space between tokens
-              x-end (inc x-end)]
+              x-end (+ space-between-tokens x-end)]
 
           (recur es
                  x-end
@@ -435,25 +343,26 @@
                  indent
                  data))))))
 
+
 (defn length
   [form]
   (count (str form)))
 
-(defn tag-token
+(defn gen-token-data
   [form x y]
   (let [val (if (const? form)
               (:val form)
               form)
         l (length val)
         m (meta form)]
-
+    
     (assoc m
            :x x
            :y y
            :x-end (+ x l)
            :y-end y)))
 
-(defn tag-coll
+(defn gen-coll-data
   [form x y x-end y-end]
   
   (let [m (meta form)]
@@ -470,7 +379,7 @@
    cljs.core/PersistentVector ["[" "]"]
    cljs.core/PersistentHashSet ["#{" "}"]})
 
-(defn add-bracket-data
+(defn gen-bracket-data
   [form x y x-end y-end]
   
   (let [[op cl] (type->brackets (type form))
@@ -491,8 +400,9 @@
             {:display cl
              :id (gen-id "closing-")
              :bracket :closing
-             :x x-end
+             :x (+ x-end space-before-closing-bracket)
              :y y-end})))
+
 
 (def toast
   (annotate-code-with-ids '(if (zero? 1)
@@ -506,28 +416,81 @@
 ;; Adding Code to Dom
 ;;#######################################################
 
+(defn by-key
+  [id]
+  (fn [data]
+    (get data id)))
 
-(defn d3-data->dom!
+(def config-styles
+  {:svg-id "repl"
+   :svg-height 800
+   :svg-width 500
+   
+   :font-size 12
+   :x-scale 0.5
+   :y-scale 2})
+
+
+(defn attr
+  [obj key f]
+  (.attr obj (name key) f))
+
+(defn style
+  [obj key f]
+  (.style obj (name key) f))
+
+(defn get-svg [config]
+  (-> (d3/select-by-id (:svg-id config))
+      (.attr "height" (:svg-height config))
+      (.attr "width" (:svg-width config))))
+
+(def special?
+  '#{if cond let loop def fn defn do})
+
+(defn restore
   [data]
+  (let [config config-styles
+        {:keys [font-size x-scale y-scale]} config]
+    
+    (-> (get-svg config)
+        (.selectAll ".code")
+        (.data data)
+        (.enter)
+        (.append "text")
+        (.text (by-key :display))
+        (style :font-size font-size)
+        (attr :x (fn [d]
+                   (* font-size x-scale (:x d))))
+        (attr :y (fn [d]
+                   (* font-size y-scale (:y d))))
+        
+        (style :fill (fn [d]
+                        (cond
+                          (:bracket d) "grey"
+                       
+                        
+                          (special? (:form d)) "purple"
+                          (number? (:form d)) "grey"
+                          :else "black")))
+        
+        (style :opacity (fn [d]
+                        (if  (:bracket d)
+                          0.4
+                          1))))))
+
+
+
+(defn remove-data-from-dom!
+  [ids]
   (-> (d3/select "#repl")
-      (.selectAll ".code")
-      (.data data)
-      (.enter)
-      (.append "text")
-      (.text (fn [d]
-               (.-display d)))
-      (.attr "x" (fn [d]
-                    (.-x d)))
-      (.attr "y" (fn [d]
-                    (.-y d)))))
+      (.selectAll "text")
+      (.filter (fn [d]
+                 (ids (:id d))))
+      (.remove)))
 
 ;;#######################################################
 ;; Compiling Text
 ;;#######################################################
-
-
-(def code
-  (atom nil))
 
 
 (defmulti compile
@@ -545,22 +508,64 @@
         (assoc :current-id id)
         (update :hiccup conj hiccup))))
 
-(defmethod compile 'add-code
-  [[_ & [code-id & forms]] {:keys [current-id] :as state}]
-
-  (let [;;hiccup (code->hiccup (cons 'do forms))
-        d3-data (-> (cons 'do forms)
-                    (annotate-code-with-ids)
-                    (form->d3-data))
-        action {:type :add-to-dom
-                :trigger-id current-id
-                :action (fn []
-                          (pprint d3-data)
-                          (d3-data->dom! d3-data)
-                          ;;(reset! code hiccup)
-                          )}]
-
+(defn add-action
+  [state action-fn]
+  
+  (let [action {:trigger-id (:current-id state)
+                :action action-fn}]
+    
     (update state :actions conj action)))
+
+
+(defmethod compile 'add-code
+  [[_ & [code-id & forms]] state]
+
+  (let [height (:height state)
+
+        d3-data (-> forms
+                    (annotate-code-with-ids)
+                    (form->d3-data 0 height))
+
+         
+      ;;  height* (+ 2 (:y-end (last d3-data)))
+
+        
+        ids (set (map :id d3-data))
+
+        stack (atom [])
+        
+        action-fn  (fn [direction]
+                     
+                     (if (= "down" direction)
+
+                       (do
+                         (swap! stack
+                                conj
+                                   (-> (d3/select "#repl")
+                                       (.selectAll "text")
+                                       (.data)))
+
+                            
+                            (-> (d3/select "#repl")
+                                (.selectAll "text")
+                                (.remove))
+                            
+                            (restore (to-array d3-data)))
+
+                       (do
+                         (-> (d3/select "#repl")
+                                (.selectAll "text")
+                                (.remove))
+                        ;; (remove-data-from-dom! ids)
+                         (when-let [s (peek @stack)]
+                           
+                           (restore s)))))]
+
+    (-> state
+      ;;  (assoc :height height*)
+        (add-action action-fn))))
+
+
 
 
 (defn postprocess
@@ -572,13 +577,13 @@
     (-> state
         (assoc :outline outline))))
 
-
 (defn compile-text
   [text]
   
   (loop [[t & ts] text
          state {:hiccup []
                 :actions []
+                :height 4
                 :current-id nil
                 :current-animation-state nil}]
 
@@ -587,6 +592,8 @@
       (postprocess state)
 
       (recur ts (compile t state)))))
+
+
 
 (defn add-scroll-triggers!
   
@@ -602,6 +609,106 @@
 ;; Main Page Columns
 ;;#######################################################
 
+
+(def text*
+   
+  [[:h1 "Introduction"]
+
+   
+   
+   [:h1 "Syntax"]
+   [:p "The history and mystery"]
+   [:h2 "Arithmetic"]
+   [:h2 "Lists"]
+   [:h2 "Conditionals"]
+   [:h2 "Bindings"]
+
+   '(add-code 'let
+
+              (let [x 1
+                    y 2]
+                (if (zero? 1)
+                  (+ x y)
+                  (* x y))))
+
+   [:h2 "Functions"]
+   [:p "I love lambdas..."]
+   
+   [:h1 "Recursion"]
+   [:h2 "Basic Examples"]
+   [:h3 "Sum"]
+ 
+   '(add-code 'sum
+              (defn sum [x n]
+                (if (zero? n)
+                  x
+                  (sum (inc x) (dec n)))))
+   [:h3 "Multiply"]
+
+   '(add-code 'multiply
+
+              (defn multiply [x n]
+                (if (zero? n)
+                  x
+                  (multiply (+ x x) (dec n)))))
+   [:h3 "Exponentiate"]
+
+  
+   '(add-code 'exponentiate
+
+              (defn power [x n]
+                (if (zero? n)
+                  x
+                  (power (* x x) (dec n)))))
+   
+   [:h3 "Factorial"]
+
+   '(add-code 'factorial
+
+              (defn factorial [n]
+                (if (zero? 1)
+                  1
+                  (* n (factorial (dec n))))))
+
+   
+   [:h2 "Functions Over Lists"]
+   [:h3 "Count"]
+   [:h3 "Member?"]
+   [:h3 "Replace"]
+   [:h3 "Nth"]
+   [:h3 "Reverse"]
+   [:h3 "Append"]
+   [:h2 "Higher Order Functions"]
+   [:h3 "Map"]
+
+   '(add-code 'map
+
+              (defn map [f ls]
+                (if (empty? ls)
+                  [1]
+                  (cons (f (first ls))
+                        (map (rest ls)))))
+
+              (factorial 5)
+              (map inc '(1 2 3)))
+   [:h3 "Walk"]
+   [:h3 "Filter"]
+   [:h3 "Reduce"]
+   [:h2 "Searching and Sorting"]
+   [:h3 "Bubble Sort"]
+   [:h3 "Quicksort"]
+   [:h2 "Conclusion"]
+   
+   [:h1 "The Meta-Circular Interpreter"]
+   [:h2 "The Eval / Apply Loop"]
+   [:h2 "S-Expressions"]
+   [:h2 "Symbols & Environment"]
+   [:h2 "Conditionals"]
+   [:h2 "Functions"]
+   [:p "Why would we even do this?"]
+   
+   [:h1 "The Y-Combinator"]
+   [:p (str (repeat 500  "-"))]])
 
 
 
@@ -639,7 +746,7 @@
                :width text-width
                :padding "20px 30px 30px 40px"
                :float "left"
-               :font-size "18px"
+               :font-size "12px"
                :overflow "scroll"}]
     
     (into [:span#text {:style style}] (:hiccup text))))
@@ -652,13 +759,13 @@
                 
                   :padding "0px 0px"
                   :z-index 1
-                  ;;:width repl-width
-                  :height "300px"
+                ;;  :width repl-width
+               ;;   :height "800px"
                   :flex "50%"
 
                   :float "left"
                   :white-space "pre-wrap"
-                  :border "10px solid black"
+                 ;; :border "10px solid black"
            
                   :font-size "18px"
                   :overflow "scroll"
@@ -667,7 +774,7 @@
                   }
           :id "repl-col"}
 
-   [:svg#repl]])
+   [:svg#repl {:height 800 :width 500}]])
 
 (def t
   (compile-text text*))
