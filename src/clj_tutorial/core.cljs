@@ -106,8 +106,8 @@
                           (Const. code))]
               
               (with-meta code* {:id (gensym "token_")
-                               :form code
-                               :display display})))]
+                                :form code
+                                :display display})))]
 
     (clojure.walk/postwalk annotate code)))
 
@@ -177,6 +177,7 @@
   (list* op
          ::indent
          (interleave (repeat ::newline)
+                     (repeat ::newline)
                      statements)))
 
 (defmethod add-newlines-&-indents 'fn
@@ -237,7 +238,7 @@
          gen-bracket-data)
 
 (def spaces-per-indent 1.5)
-(def space-between-tokens 1)
+(def space-between-tokens 2)
 (def space-after-opening-bracket 0.5)
 (def space-before-closing-bracket 0.5)
 
@@ -251,7 +252,9 @@
 
   ([form x y acc]
    
-   (let [form (cons 'do form)]
+   (let [form (interleave (repeat ::newline)
+                          (repeat ::newline)
+                          form)]
      
      (form->d3-data* form x y acc))))
 
@@ -286,7 +289,9 @@
       (cond
 
         (not (seq elements))
-        (let [{:keys [x-end y-end] :or {x x-original y y-original}} (last data)
+        (let [{:keys [x-end y-end]
+               :or {x-end (+ space-between-tokens x-original)
+                    y-end y-original}} (last data)
 
               ;; create bracket data
               [op cl] (gen-bracket-data form
@@ -373,23 +378,25 @@
            :x-end x-end
            :y-end y-end)))
 
-(def type->brackets
-  {cljs.core/List ["(" ")"]
-   cljs.core/PersistentArrayMap ["{" "}"]
-   cljs.core/PersistentVector ["[" "]"]
-   cljs.core/PersistentHashSet ["#{" "}"]})
+(defn coll->brackets [form]
+  (cond
+    (list? form) ["(" ")"]
+    (map? form) ["{" "}"]
+    (vector? form) ["[" "]"]
+    (set? form) ["#{" "}"]))
 
 (defn gen-bracket-data
   [form x y x-end y-end]
   
-  (let [[op cl] (type->brackets (type form))
+  (let [[op cl] (coll->brackets form)
 
         id (-> form meta :id)
         
         gen-id (fn [prefix]
                  (-> prefix
                      (str id)
-                     (keyword)))]
+                   ;;  (keyword)
+                     ))]
 
     (vector {:display op
              :id (gen-id "opening-")
@@ -428,56 +435,370 @@
    
    :font-size 12
    :x-scale 0.5
-   :y-scale 2})
+   :y-scale 3})
+
+
+
 
 
 (defn attr
-  [obj key f]
-  (.attr obj (name key) f))
+  
+  ([obj key]
+   (.attr obj (name key)))
+  
+  ([obj key f]
+   (.attr obj (name key) f)))
 
 (defn style
-  [obj key f]
-  (.style obj (name key) f))
+  
+  ([obj key]
+   (.style obj (name key)))
+  
+  ([obj key f]
+   (.style obj (name key) f)))
 
-(defn get-svg [config]
-  (-> (d3/select-by-id (:svg-id config))
-      (.attr "height" (:svg-height config))
-      (.attr "width" (:svg-width config))))
+(comment
+ (defn text
+   [obj txt]
+   (.text obj txt)))
+
+
+
 
 (def special?
-  '#{if cond let loop def fn defn do})
+  '#{if cond let loop def fn defn do quote})
+
+(def function?
+  '#{cons first rest empty? list?})
+
+
+
+
+(def attr?
+    #{:x :y :height :width :id :class })
+
+(defn property
+  [obj key & args]
+  
+  (let [f (if (attr? key)
+            attr
+            style)]
+
+    (apply f (list* obj key args))))
+
+(defn modify-properties
+  
+  [& pairs]    
+  
+  (let [former-vals (atom {})
+
+        record! (fn [id key]
+                  
+                  (when id
+                    
+                    (let [current (-> (str "#" id)
+                                      (js/d3.selectAll )
+                                      (property key))]
+                      
+                      (swap! former-vals
+                             update
+                             id
+                             (fnil conj {})
+                             {key current}))))
+
+        ff (fn [key f]
+             
+             (fn [{:keys [id] :as d}]
+
+               (record! id key)
+
+               (if (or (number? f) (string? f))
+                 
+                 f
+                 
+                 (f d))))
+
+        rr (fn [key _]
+             
+             (fn [{:keys [id]}]
+                                      
+               (get-in @former-vals [id key])))
+
+
+        gen-property-fn (fn [transform-f [key f]]
+
+                          (let [f* (transform-f key f)]
+
+                            (fn [obj]
+
+                              (property obj key f*))))
+
+        chain-property-fns (fn [transform-f pairs]
+                             (->> pairs
+                                  (map (partial gen-property-fn transform-f))
+                                  (apply comp)))
+
+        pairs (partition 2 pairs)
+        
+        forward (chain-property-fns ff pairs)
+        
+        rewind (chain-property-fns rr pairs)]
+    
+    [forward rewind]))
+
+(defn mod-properties
+  [obj & args]
+  (letfn [(gen-property-fn [[key f]]
+            (fn [obj]
+              (property obj key f)))]
+
+    (let [f (->> args
+               (partition 2)
+               (map gen-property-fn)
+               (apply comp))]
+      
+      (f obj))))
+
+
+;;(comment)
+
+
+
+
+(def ^:dynamic  *cf*)
+
+(defn get-cf-param
+  [param]
+  (get config-styles param))
+
+
+
+(defn get-svg [cf]
+  (-> (d3/select-by-id (cf :svg-id))
+      (.attr "height" (cf :svg-height))
+      (.attr "width" (cf :svg-width))))
+
+(defn add-default-properties
+  
+  [obj]
+    
+  (mod-properties obj
+                  
+                  :font-size (get-cf-param :font-size)
+                  
+                  :id (by-key :id)
+                  
+                  :x (fn [d]
+                       (* (get-cf-param :font-size)
+                          (get-cf-param :x-scale)
+                          (:x d)))
+                  
+                  :y (fn [d]
+                       (* (get-cf-param :font-size)
+                          (get-cf-param :y-scale)
+                          (:y d)))
+                  
+                  :fill (fn [{:keys [form bracket]}]
+                          (cond
+                            bracket "grey"
+                            (special? form) "purple"
+                            (number? form) "grey"
+                            (function? form) "blue"
+                            :else "black"))
+                  
+                  :opacity (fn [{:keys [bracket]}]
+                             
+                             (if bracket
+                               0.4
+                               1))))
 
 (defn restore
   [data]
-  (let [config config-styles
-        {:keys [font-size x-scale y-scale]} config]
-    
+  (let [config config-styles]
+      
     (-> (get-svg config)
         (.selectAll ".code")
         (.data data)
         (.enter)
         (.append "text")
         (.text (by-key :display))
-        (style :font-size font-size)
-        (attr :x (fn [d]
-                   (* font-size x-scale (:x d))))
-        (attr :y (fn [d]
-                   (* font-size y-scale (:y d))))
-        
-        (style :fill (fn [d]
-                        (cond
-                          (:bracket d) "grey"
-                       
-                        
-                          (special? (:form d)) "purple"
-                          (number? (:form d)) "grey"
-                          :else "black")))
-        
-        (style :opacity (fn [d]
-                        (if  (:bracket d)
-                          0.4
-                          1))))))
+        (add-default-properties)
+        (.on "click" (fn [d]
 
+                       (when (:bracket d)
+                         
+                         (let [[forward rewind] (modify-properties :fill "green"
+                                                                   :x 200
+                                                                   :y 300)]
+                           
+                           (let [obj (-> (get-svg config)
+                                         (.selectAll "text"))]
+
+
+                             (-> obj
+                                 (.transition)
+                                 (.duration 1500)
+                                 (forward)
+                                 (.transition)
+                                 (.duration 1500)
+                                 (rewind))))))))))
+
+
+
+
+
+(comment
+
+  (defprotocol ID3
+    (gen-fastforward-fn [this logger args])
+    (gen-rewind-fn [this logger args]))
+
+  (defrecord D3-Append [id]
+
+    ID3
+    (gen-fastforward-fn [this _ _]
+        
+      (fn [obj data]
+          
+        (-> obj
+            (.data data)
+            (.enter)
+            (.append "text")
+            (.text (by-key :display))
+            (.classed id true))))
+    
+    (gen-rewind-fn [this _  _]
+      
+      (fn [_]
+        (-> (get-svg)
+            (.selectAll (str "." id))
+            (.remove)))))
+
+  (defrecord D3-Modify [id]
+
+    ID3
+    (gen-fastforward-fn [this logger [transitions mappings]]
+      
+      (let [ff (gen-modify-ff-fn logger id mappings)]
+
+        (fn [obj]
+          (-> obj
+              (.classed (str "." id) true)
+              (transitions)
+              (ff)))))
+    
+    (gen-rewind-fn [this logger [transitions mappings]]
+
+      (let [rr (gen-modify-rr-fn logger id mappings)]
+
+        (fn [_]
+          (-> (get-svg)
+              (.selectAll (str "." id))
+              (transitions)
+              (rr))))))
+
+  (defn gen-ff-&-rr-fns [{:keys [id] :as d3-action}]
+    
+    (letfn [(tag-divs [obj]
+              (.classed obj
+                        (str id)
+                        true))
+            (get-tagged-divs []
+              (-> (get-svg)
+                  (.selectAll (str "." id))))]
+
+      (let [ff (gen-fastforward-fn d3-action )]
+        
+        [(comp )])))
+
+  
+
+  (defrecord D3-Modify [id]
+
+    ID3
+    (gen-fastforward-fn [this [log transitions mappings]]
+      )
+    (gen-rewind-fn [this [log transitions mappings]]
+      ))
+
+  
+
+  
+  
+  (compile-animation
+
+   :select (fn [])
+   :transition {:delay 1 :ease 3}
+   :modify {:x 1 :y 2}
+   :add data
+   :remove (fn [_])
+   
+   )
+
+  
+
+  
+  
+  (defn compile-animation
+    
+    [& actions]
+    
+    (let [pairs (partition 2 actions)]
+      
+      (loop [[[type value] & pairs] pairs
+             selection nil
+             transition nil
+             forward-acc []
+             rewind-acc []]
+
+        (case type
+
+          :select
+          (recur ps
+                 value
+                 nil
+                 acc)
+
+          :transition
+          (let [t
+                (when false
+                  (loop [[p & ps :as p*] pairs
+                         acc []]
+                    
+                    (if (or (not (seq p*))
+                            (#{:transition :select} (first p)))
+                      
+                      [acc ps]
+                      
+                      (recur ps
+                             (conj acc p)))))]
+            
+            (recur ps
+                   selection
+                   value
+                   acc))
+
+          :add
+          (recur ps
+                 (comp value selection)
+                 transition
+                 acc)
+
+          :remove
+          (recur ps
+                 (comp value selection)
+                 transition
+                 acc)
+
+          :modify
+          (let [animations (modify-attrs selection
+                                
+                                          value)]
+            
+            (recur ps
+                   selection
+                   transition
+                   (conj acc animations))))))))
 
 
 (defn remove-data-from-dom!
@@ -566,6 +887,20 @@
         (add-action action-fn))))
 
 
+(defprotocol IAnimate
+  (selection [this])
+  (transition [this])
+  (transformation [this])
+  (rewind [this state]))
+
+(defrecord Add [obj]
+
+  IAnimate
+   
+  (selection [this])
+  (transition [this])
+  (transformation [this])
+  (rewind [this state]))
 
 
 (defn postprocess
@@ -685,14 +1020,31 @@
 
               (defn map [f ls]
                 (if (empty? ls)
-                  [1]
+                  '()
                   (cons (f (first ls))
                         (map (rest ls)))))
 
-              (factorial 5)
               (map inc '(1 2 3)))
+   
    [:h3 "Walk"]
    [:h3 "Filter"]
+   '(add-code 'filter
+
+              (defn filter[pred? ls]
+                
+                (if (empty? ls)
+                  
+                  '()
+                  
+                  (let [fst (first ls)]
+                    
+                    (if (pred? fst)
+                      
+                      (cons fst (filter (rest ls)))
+                      
+                      (filter (rest ls))))))
+
+              (filter odd? '(1 2 3)))
    [:h3 "Reduce"]
    [:h2 "Searching and Sorting"]
    [:h3 "Bubble Sort"]
