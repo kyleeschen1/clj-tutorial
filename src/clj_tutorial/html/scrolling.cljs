@@ -17,6 +17,7 @@
   
   (let [element (.getElementById js/document id)
         params {:element element
-                :handler f}]
+                :handler f
+                :offset "25%"}]
     
     (js/Waypoint. (clj->js params))))
