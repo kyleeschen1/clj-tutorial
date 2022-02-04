@@ -453,6 +453,7 @@
       (list? form) (let [special? '#{if cond do fn defn}
                          binding? '#{loop let}
                          [f & _] form]
+                     
                      (cond
 
                        (special? f) f
@@ -465,27 +466,30 @@
   [form]
   form)
 
-(defrecord Newline-Indent [size])
+(defrecord Pos [dx dy element])
 
 (defmethod add-x-y :s-exprs
   [[f & args :as form]]
   
   (if (some (complement token?) args)
     
-    (let [nl-indent (Newline-Indent. (count (str f)))
-          nl-indent (cons nl-indent (interleave (repeat ::newline)
-                                                (repeat ::indent)))]
-      (list* f (interleave args nl-indent)))
+    (let [dx (count (str f))
+          args->indents (fn [arg]
+                          (Pos. dx 1 arg))]
+      (list* f
+             (first args)
+             (map args->indents (rest args))))
+    
     form))
 
 (defmethod add-x-y 'if
   [[op pred then else]]
   
-  (let [v [op pred ::newline ::indent then]
+  (let [v [op pred (Pos. 1 1 then)]
         
         v (if else
             
-            (into v [::newline else])
+            (conj v (Pos. 0 1 else))
             
             v)]
 
@@ -494,59 +498,59 @@
 (defmethod add-x-y 'cond
   [[op & forms]]
   (let [insert-newline-between (fn [[pred then]]
-                                 [pred ::newline then])
+                                 [pred (Pos. 0 1 then)])
         spaced-pairs (->> forms
                           (partition 2)
                           (map insert-newline-between)
-                          (interleave (repeat [::newline ::newline]) )
+                          (interleave (Pos. 0 2 nil) )
                           (apply concat))]
     
     (list* op
-           ::indent
+           (Pos. 1 0 nil)
            spaced-pairs)))
 
 (defmethod add-x-y 'do
   [[op & statements]]
   (list* op
-         ::indent
-         (interleave (repeat ::newline)
-                     statements)))
+         (Pos. 1 0 nil)
+         (map #(Pos. 0 1 %) statements)))
 
 (defmethod add-x-y 'fn
   [[op params & body]]
   (list* op
          params
-         ::newline
-         ::indent
-         (butlast (interleave body (repeat ::newline)))))
+         (Pos. 1 0 nil)
+         (map #(Pos. 0 1 %) body )))
 
 (defmethod add-x-y 'defn
   [[op fname params & body]]
   (list* op
          fname
          params
-         ::newline
-         ::indent
-         (interleave body (repeat ::newline))))
+         (Pos. 1 0 nil)
+         (map #(Pos. 0 1 %) body )))
 
 (defmethod add-x-y 'binding-forms
   [[op bindings & body]]
   
   (let [bindings* (loop [[sym val & rst :as b] bindings
-                         
+                         n 0
                          acc (with-meta [] (meta bindings))]
                     
                     (if-not b
                       
-                      (pop acc) ;; eliminates closing newline
-                      
-                      (recur rst (conj acc sym val ::newline))))]
+                      acc
+
+                      (let [nl (if (zero? n)
+                                   0
+                                   1)]
+                        (recur rst
+                               (inc n)
+                               (conj acc (Pos. 0 nl sym) val)))))]
     
-    (list* op
-           bindings*
-           ::newline
-           ::indent
-           body)))
+    (list op
+          bindings*
+          (Pos. 1 1 body))))
 
 
 
@@ -558,8 +562,7 @@
 ;; Building D3 Data from Code
 ;;#######################################################
 
-(declare code->data*
-         coll->data
+(declare coll->data
          gen-token-data
          gen-coll-data
          gen-bracket-data)
@@ -570,135 +573,121 @@
    :before-closing 0.5
    :between-tokens 2})
 
+ 
+(defn code->data
 
-
-(defn form->d3-data
   ([form]
-
-   (form->d3-data form 0 0 []))
+   (code->data form 0 0 []))
 
   ([form x y]
-   (form->d3-data form x y []))
-
-  ([form x y acc]
-   (code->data* form x y acc)))
-
-
-(defn code->data*
- 
-  [form x y data]
+   (code->data form x y []))
   
-  (if (token? form)
-    
-    (gen-token-data form x y)
+  ([form x y data]
 
-    (coll->data form x y data)))
+   (if (token? form)
+
+     (gen-token-data form x y)
      
-(defn coll->data
-  
-  [form x y data]
-  
-  (let [form* (add-x-y form)
-        
-        [x0 y0] [x y]
+     (let [form* (add-x-y form)
+           
+           [x0 y0] [x y]
 
-        ;; Adjust for the opening bracket
-        x (+ x 1 (:after-opening spaces))]
+           ;; Adjust for the opening bracket
+           x (+ x 1 (:after-opening spaces))]
 
-    (loop [[e & es :as elements] form*
-           x x
-           y y
-           indent x
-           data []]
-      
-      (cond
+       (loop [[e & es :as elements] form*
+              x x
+              y y
+              indent x
+              data []]
+         
+         (cond
 
 
-        (and  (not (seq elements))
-              (not (:id (meta form))))
-        data
+           (and  (not (seq elements))
+                 (not (:id (meta form))))
+           data
 
-        (not (seq elements))
-        (let [{:keys [x-end y-end]
-               :or {x-end (+ (:between-tokens spaces) x0)
-                    y-end y0}} (last data)
+           (not (seq elements))
+           (let [{:keys [x-end y-end]
+                  :or {x-end (+ (:between-tokens spaces) x0)
+                       y-end y0}} (last data)
 
-              ;; create bracket data
-              [op cl] (gen-bracket-data form
-                                        x0
-                                        y0
-                                        x-end
-                                        y-end)
+                 ;; create bracket data
+                 [op cl] (gen-bracket-data form
+                                           x0
+                                           y0
+                                           x-end
+                                           y-end)
 
-              data (conj data op cl)
-              
-              ;; add parent-id to all elements
-              id (-> form meta :id)
-              data (mapv (fn [frame]
-                           (if (:parent-id frame)
-                             frame
-                             (assoc frame :parent-id id)))
-                         data)
-              
-              ;; Adjust for closing bracket
-              x-end (+ x-end (:between-tokens spaces) (:before-closing spaces))
+                 ;; Properly sequence brackets and data
+                 data (conj (into [op] data) cl)
+                 
+                 ;; Adjust for closing bracket
+                 x-end (+ x-end
+                          (:between-tokens spaces)
+                          (:before-closing spaces))
 
-              ;; create coll data
-              coll-data (gen-coll-data form
-                                       x0
-                                       y0
-                                       x-end
-                                       y-end)
+                 ;; create coll data
+                 coll-data (gen-coll-data form
+                                          x0
+                                          y0
+                                          x-end
+                                          y-end)
 
-              ;; Add child ids
-              coll-data (->> data
-                             (map :id)
-                             (set)
-                             (assoc coll-data :child-ids))]
+                 ;; Add child ids
+                 coll-data (->> data
+                                (map :id)
+                                (set)
+                                (assoc coll-data :child-ids))]
 
-          (conj data coll-data))
+             (into [coll-data] data))
 
-        (instance? Newline-Indent e)
-        (let [indent* (+ indent (* (:indent spaces) (:size e)))]
-          (recur es
-                 indent*
-                 (inc y)
-                 indent*
-                 data))
-        
-        (= e ::newline)
-        (let [nl {:display " "
-                  :newline true
-                  :x indent
-                  :dy (inc y)}]
-          (recur es
-                 indent ;; return x to indent position
-                 (inc y)
-                 indent
-                 data))
-        
-        (= e ::indent)
-        (recur es
-               (+ x (:indent spaces))
-               y
-               (+ indent (:indent spaces))
-               data)
+           (instance? Pos e)
+           (let [{:keys [dx dy element]} e
+                 
+                 y (+ y dy)
+                 
+                 indent (+ indent (* dx (:indent spaces)))
 
-        :regular-element
-        (let [frames (code->data* e x y data)
+                 data (if-not element
+                        
+                        (conj data {:position true
+                                    :dy dy
+                                    :indent indent})
 
-              [last-fr data] [(last frames) (into data frames)]
+                        (let [data* (code->data element indent y indent)
 
-              {:keys [x-end y-end]} last-fr
+                              path [0 :dy]
 
-              ;; Increment to adjust for space between tokens
-              x-end (+ (:between-tokens spaces) x-end)]
+                              data* (assoc-in data* path dy)]
+                          
+                          (into data data*)))
 
-          (recur es
-                 x-end
-                 y-end
-                 indent
-                 data))))))
+                 x (+ (:between-tokens spaces) indent)]
+             
+             (recur es
+                    x
+                    y
+                    indent
+                    data))
+
+
+           :regular-element
+           (let [frames (code->data e x y data)
+
+                 [last-fr data] [(last frames) (into data frames)]
+
+                 {:keys [x-end y-end]} last-fr
+
+                 ;; Increment to adjust for space between tokens
+                 x-end (+ (:between-tokens spaces) x-end)]
+
+             (recur es
+                    x-end
+                    y-end
+                    indent
+                    data))))))))
 
 
 (defn length
@@ -747,7 +736,9 @@
         id (-> form meta :id)
         
         gen-id (fn [prefix]
-                 (str prefix id))]
+                 (str prefix id))
+
+        cl-x (+ x-end (:before-closing spaces))]
 
     (vector {:display op
              :id (gen-id "opening-")
@@ -758,8 +749,10 @@
             {:display cl
              :id (gen-id "closing-")
              :bracket :closing
-             :x (+ x-end (:before-closing-bracket spaces))
-             :y y-end})))
+             :x cl-x
+             :y y-end
+             :x-end (inc cl-x)
+             :y-end y-end})))
 
 ;;#######################################################
 ;; Adding Code to Dom
@@ -1141,8 +1134,10 @@
       (add-data-to-repl (:data params))
       
       (let [forms (map add-ids forms)
-          
-            data (form->d3-data (interleave forms (repeat ::newline))  0 0)
+
+            forms (cons (first forms)
+                        (map #(Pos. 0 1 %) (rest forms)))
+            data (code->data forms  0 0)
 
             mp {:forms forms :data data}]
 
@@ -1311,7 +1306,7 @@
    
     ;; Add result in place
     (let [[x y] (selection->attrs selection :x :y)  
-          data (form->d3-data result)]
+          data (code->data result)]
 
       (add-event! true (fn []
                          (add-data-to-repl data {:selection-fn (fn []
