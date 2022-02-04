@@ -22,7 +22,377 @@
    [reagent.core :as reagent :refer [atom]]
    [reagent.dom :as rdom])
    (:require-macros
-   [cljs.core.async.macros :as m :refer [go go-loop ]]))
+    [cljs.core.async.macros :as m :refer [go go-loop ]]))
+
+
+
+(comment
+  ;;#######################################################
+  ;; Treemap
+  ;;#######################################################
+
+  (def stratify
+    (-> (js/d3.stratify)
+        (.id (fn [d] (:id d)))
+        (.parentId (fn [d] (:parent-id d)))))
+
+  (def tree
+    (-> '(if (zero? 0) (+ 1 2) (* 3 4))
+        annotate-code-with-ids
+        form->d3-data
+        into-array
+        stratify))
+
+  (defn node-get
+
+    ([d kw]
+     (get (.-data d) kw))
+
+    ([kw]
+     (fn [d]
+       (get (.-data d) kw))))
+
+  (defn tree-add-default-properties
+    
+    [obj x-anchor y-anchor]
+    
+    (modify obj
+            
+            :font-size (get-cf-param :font-size)
+            
+            :id (fn [d]
+                  (str "text-" (:id (.-data d))))
+            
+            :x (fn [d]
+                 (+ x-anchor
+                    (* (get-cf-param :font-size)
+                       (get-cf-param :x-scale)
+                       (:x (.-data d)))))
+            
+            :y (fn [d]
+                 (+ y-anchor
+                    (* (get-cf-param :font-size)
+                       (get-cf-param :y-scale)
+                       (:y (.-data d)))))
+            
+            :fill (fn [d]
+                    (let [{:keys [form bracket]} (.-data d)]
+                      (cond
+                        bracket "grey"
+                        (special? form) "purple"
+                        (number? form) "grey"
+                        (function? form) "blue"
+                        :else "black")))
+            
+            :opacity (fn [d]
+                       (let [{:keys [bracket]} (.-data d)]
+                         (if bracket
+                           0.4
+                           1)))))
+
+
+  (defn add-clicker
+    []
+    (-> (js/d3.selectAll ".code")
+        (.on "click" (fn [node]
+                       
+                       (let [d (.-data node)]
+
+                         (pprint d)
+                         
+                         (when (:bracket d)
+
+                           (pprint d)
+
+                           (let [p (.-parent node)]
+                             
+                             (-> p
+                                 (.each (fn [node]
+                                          
+                                          (let [id (:id (.-data node))]
+                                            
+                                            (-> (js/d3.select (str "#text-" id))
+                                                (.style "fill" "red")
+                                                (.transition)
+                                                (.duration 1000)
+                                                (.style "fill" "black")))))))))))))
+
+  (defn build-tree []
+    (-> (get-repl)
+        (.selectAll "g")
+        (.data (.descendants tree))
+        (.enter)
+        (.append "text")
+        (.text (node-get :display))
+        (.classed "code" true)
+        (.transition)
+        (.duration 1000)
+        (tree-add-default-properties 0 100))
+
+    (add-clicker))
+
+  (comment
+    (-> (js/d3.selectAll ".code")
+        (.on "click" (fn [node]
+                       
+                       (let [d (.-data node)]
+
+                         (pprint d)
+                         
+                         (when (:bracket d)
+
+                           (pprint d)
+
+                           (let [p (.-parent node)]
+                             
+                             (-> p
+                                 (.each (fn [node]
+                                          
+                                          (let [id (:id (.-data node))]
+                                            
+                                            (-> (js/d3.select (str "#text-" id))
+                                                (.style "fill" "red")
+                                                (.transition)
+                                                (.duration 1000)
+                                                (.style "fill" "black"))))))))))))))
+
+(comment
+  (defn form->dom!
+    [form]
+    
+    (let [id (:id (meta form))
+          
+          id-attr {:id (str id)
+                   :class "code"}]
+      
+      (if (token? form)
+
+        [:g id-attr]
+        
+        (let [elements (if (map? form)
+                         
+                         (apply concat form)
+                         
+                         (seq form))
+
+              op [:g {:id (str "opening-" id)
+                      :class "code"}]
+              
+              cl [:g {:id (str "closing-" id)
+                      :class "code"}]
+              
+              divs (mapv form->dom! elements)]
+          
+          (into [:g id-attr op cl] divs)))))
+
+  (defn add-to-dom
+    [hiccup]
+    
+    (let [el (gdom/getElement "repl")]
+      
+      (rdom/render hiccup el))))
+
+(comment
+  (defmulti get-ff-&-rr
+    (fn [key _]
+      key))
+
+  (defn compose
+    [& fns]
+    (apply comp (reverse fns)))
+  
+  (defmethod get-ff-&-rr :modify
+    [_ pairs]
+    (let [animation-id (gensym "animation_")
+          former-vals (atom {})
+
+          record! (fn [id key]
+                    
+                    (when id
+                      
+                      (let [current (-> (str "#" id)
+                                        (js/d3.selectAll)
+                                        (aspect key))]
+                        
+                        (swap! former-vals
+                               update-in
+                               [id]
+                               (fnil conj {})
+                               {key current}))))
+
+          ff (fn [key f]
+               
+               (fn [{:keys [id] :as d}]
+
+                 (record! id key)
+
+                 (if (or (number? f) (string? f))
+                   
+                   f
+                   
+                   (f d))))
+
+          rr (fn [key _]
+               
+               (fn [{:keys [id]}]
+                 
+                 (get-in @former-vals [id key])))
+
+
+          gen-property-fn (fn [transform-f [key f]]
+
+                            (let [f* (transform-f key f)]
+
+                              (fn [obj]
+
+                                (aspect obj key f*))))
+
+          chain-property-fns (fn [transform-f pairs]
+                               (->> pairs
+                                    (map (partial gen-property-fn transform-f))
+                                    (apply comp)))
+          
+          forward (chain-property-fns ff pairs)
+          
+          rewind (chain-property-fns rr pairs)
+
+          initiated? (atom false)
+          
+          forward (fn [obj]
+                    (let [obj* (forward obj)]
+                      (reset! initiated? true)
+                      obj))
+
+          rewind (fn [obj]
+                   (if @initiated?
+                     (rewind obj)
+                     obj))]
+      
+      [forward rewind]))
+
+  (defmethod get-ff-&-rr :append
+    [_ data]
+    (let [animation-id (gensym "animation-")
+          cache (atom nil)
+          ff (fn [obj]
+               (->  obj
+                    (.selectAll ".code")
+                    (.data data)
+                    (.enter)
+                    (.append "text")
+                    (.classed animation-id true)
+                    (.transition)
+                    (.duration 500)
+                    (.text (by-key :display))
+                    (add-default-properties 0 0)))
+          rr (fn [obj]
+
+               (let [obj* (.selectAll obj (str "#" animation-id)) ]
+
+                 (.remove obj*)))]
+      [ff rr]))
+
+  (defmethod get-ff-&-rr :remove
+    [_ data]
+    (let [[ff rr] (get-ff-&-rr :append data)]
+      
+      [rr ff]))
+
+
+
+  (defn gen-transition-fn
+    
+    [config]
+
+    (let [{:keys [ease duration delay]
+           :or {ease js/d3.easeLinear
+                duration 0
+                delay 0}} config]
+      
+      (fn [obj]
+        
+        (-> obj
+            (.transition (str (gensym)))
+            ;;(.ease ease)
+            (.duration duration)
+            (.delay delay)))))
+
+  (defn compile-animation
+    
+    [{:keys [select transition append remove modify]}]
+
+    (let [s (if select
+              select
+              (fn [_]
+                (-> (get-repl config)
+                    (.selectAll "text"))))
+          
+          t (if transition
+              (gen-transition-fn transition)
+              identity)
+
+          transforms
+          (for [key [:modify]
+                config [modify]]
+
+            (when config
+              (->> (get-ff-&-rr key config)
+                   (mapv (partial compose s t)))))
+
+          ff (map first transforms)
+          rr (map second transforms)]
+
+      {:ff ff
+       :rr rr}))
+
+  (defn compile-animations [& configs]
+    
+    (let [animations (map compile-animation configs)
+          ffs (map :ff animations)
+          rrs (map :rr animations)]
+      
+      {:ff (flatten ffs)
+       :rr (reverse (flatten rrs))}))
+
+
+  (def x
+    (compile-animations
+     
+     {:transition {:duration 1500}
+      :modify {:x 200 :y 300 :fill "blue"}}
+
+     {:transition {:delay 250 :duration 1500}
+      :modify {:x 300 :y 200 :fill "green"}}
+     
+     {:transition {:duration 1500}
+      :modify {:x 300 :y 100 :fill "red"}}))
+
+  
+
+
+
+
+
+
+
+
+(defn fns->thunks [fns & args]
+  (map (fn [f]
+         (fn []
+           (apply f args)))
+       fns))
+
+(defn add-click! []
+  (-> (get-repl config)
+      (.on  "click" (fn [d]               
+                      (let [obj (-> (get-repl config)
+                                    (.selectAll "text"))
+                            {:keys [ff rr] } x
+                            thunks (fns->thunks (concat ff rr)
+                                                obj)]
+
+                        (add-events! true thunks))))))
+)
 
 ;;#######################################################
 ;; Adding Ids, Values, Display Info
@@ -149,7 +519,7 @@
          params
          ::newline
          ::indent
-         (interleave body (repeat ::newline))))
+         (butlast (interleave body (repeat ::newline)))))
 
 (defmethod add-newlines-&-indents 'defn
   [[op fname params & body]]
@@ -176,7 +546,9 @@
            bindings*
            ::newline
            ::indent
-           (interleave body (repeat ::newline)))))
+           body
+           ;;(interleave body (repeat ::newline))
+           )))
 
 (defmethod add-newlines-&-indents 'let
   [form]
@@ -542,40 +914,6 @@
                        0.4
                        1))))
 
-(defn form->dom!
-  [form]
-  
-  (let [id (:id (meta form))
-        
-        id-attr {:id (str id)
-                 :class "code"}]
-    
-    (if (token? form)
-
-      [:g id-attr]
-      
-      (let [elements (if (map? form)
-                       
-                       (apply concat form)
-                       
-                       (seq form))
-
-            op [:g {:id (str "opening-" id)
-                    :class "code"}]
-            
-            cl [:g {:id (str "closing-" id)
-                    :class "code"}]
-  
-            divs (mapv form->dom! elements)]
-        
-        (into [:g id-attr op cl] divs)))))
-
-(defn add-to-dom
-  [hiccup]
-  
-  (let [el (gdom/getElement "repl")]
-    
-    (rdom/render hiccup el)))
 
 (defn select-descendants-by-id
   [id]
@@ -686,180 +1024,7 @@
                             0.4
                             1))))))
 
-  
-(defmulti get-ff-&-rr
-  (fn [key _]
-    key))
 
-(defn compose
-  [& fns]
-  (apply comp (reverse fns)))
-  
-(defmethod get-ff-&-rr :modify
-  [_ pairs]
-  (let [animation-id (gensym "animation_")
-        former-vals (atom {})
-
-        record! (fn [id key]
-                  
-                  (when id
-                    
-                    (let [current (-> (str "#" id)
-                                      (js/d3.selectAll)
-                                      (aspect key))]
-                      
-                      (swap! former-vals
-                             update-in
-                             [id]
-                             (fnil conj {})
-                             {key current}))))
-
-        ff (fn [key f]
-             
-             (fn [{:keys [id] :as d}]
-
-               (record! id key)
-
-               (if (or (number? f) (string? f))
-                 
-                 f
-                 
-                 (f d))))
-
-        rr (fn [key _]
-             
-             (fn [{:keys [id]}]
-                                      
-               (get-in @former-vals [id key])))
-
-
-        gen-property-fn (fn [transform-f [key f]]
-
-                          (let [f* (transform-f key f)]
-
-                            (fn [obj]
-
-                              (aspect obj key f*))))
-
-        chain-property-fns (fn [transform-f pairs]
-                             (->> pairs
-                                  (map (partial gen-property-fn transform-f))
-                                  (apply comp)))
-        
-        forward (chain-property-fns ff pairs)
-        
-        rewind (chain-property-fns rr pairs)
-
-        initiated? (atom false)
-        
-        forward (fn [obj]
-                  (let [obj* (forward obj)]
-                    (reset! initiated? true)
-                    obj))
-
-        rewind (fn [obj]
-                 (if @initiated?
-                   (rewind obj)
-                   obj))]
-    
-    [forward rewind]))
-
-(defmethod get-ff-&-rr :append
-  [_ data]
-  (let [animation-id (gensym "animation-")
-        cache (atom nil)
-        ff (fn [obj]
-             (->  obj
-                  (.selectAll ".code")
-                  (.data data)
-                  (.enter)
-                  (.append "text")
-                  (.classed animation-id true)
-                  (.transition)
-                  (.duration 500)
-                  (.text (by-key :display))
-                  (add-default-properties 0 0)))
-        rr (fn [obj]
-
-             (let [obj* (.selectAll obj (str "#" animation-id)) ]
-
-               (.remove obj*)))]
-    [ff rr]))
-
-(defmethod get-ff-&-rr :remove
-  [_ data]
-  (let [[ff rr] (get-ff-&-rr :append data)]
-    
-    [rr ff]))
-
-
-
-(defn gen-transition-fn
-  
-  [config]
-
-  (let [{:keys [ease duration delay]
-         :or {ease js/d3.easeLinear
-              duration 0
-              delay 0}} config]
-    
-    (fn [obj]
- 
-      (-> obj
-          (.transition (str (gensym)))
-          ;;(.ease ease)
-          (.duration duration)
-          (.delay delay)))))
-
-(defn compile-animation
-  
-  [{:keys [select transition append remove modify]}]
-
-  (let [s (if select
-            select
-            (fn [_]
-              (-> (get-repl config)
-                  (.selectAll "text"))))
-        
-        t (if transition
-            (gen-transition-fn transition)
-            identity)
-
-        transforms
-        (for [key [:modify]
-              config [modify]]
-
-          (when config
-            (->> (get-ff-&-rr key config)
-                 (mapv (partial compose s t)))))
-
-        ff (map first transforms)
-        rr (map second transforms)]
-
-    {:ff ff
-     :rr rr}))
-
-(defn compile-animations [& configs]
- 
- (let [animations (map compile-animation configs)
-       ffs (map :ff animations)
-       rrs (map :rr animations)]
-   
-   {:ff (flatten ffs)
-    :rr (reverse (flatten rrs))}))
-
-
-(def x
-    (compile-animations
-     
-     {:transition {:duration 1500}
-      :modify {:x 200 :y 300 :fill "blue"}}
-
-     {:transition {:delay 250 :duration 1500}
-      :modify {:x 300 :y 200 :fill "green"}}
-      
-     {:transition {:duration 1500}
-      :modify {:x 300 :y 100 :fill "red"}}))
 
 ;;######################################################
 ;; Async
@@ -895,31 +1060,6 @@
   (when t
     (add-event! block? t)
     (recur block? ts)))
-
-
-
-
-
-
-
-
-(defn fns->thunks [fns & args]
-  (map (fn [f]
-         (fn []
-           (apply f args)))
-       fns))
-
-(defn add-click! []
-  (-> (get-repl config)
-      (.on  "click" (fn [d]               
-                      (let [obj (-> (get-repl config)
-                                    (.selectAll "text"))
-                            {:keys [ff rr] } x
-                            thunks (fns->thunks (concat ff rr)
-                                                obj)]
-
-                        (add-events! true thunks))))))
-
 
 ;;#######################################################
 ;; Compiling Text
@@ -1056,12 +1196,11 @@
         (add-evaluate-button))))
 
 
-
 (defmethod -compile-page 'add-animation
   
   [state [_ & animation]]
 
-  (let [{:keys [ff rr]} (apply compile-animation  animation)
+  (let [{:keys [ff rr]} state ;;(apply compile-animation  animation)
 
         action-fn  (fn [direction]
                      (let [i (-> (get-repl config)
@@ -1175,9 +1314,7 @@
   (let [[x y] (selection->attrs selection :x :y) ]
     
     (add-event! true (fn []
-
                  
-                       
                       (-> selection
                           (.selectAll "text")
                           (.transition)
@@ -1203,9 +1340,7 @@
 
       (add-event! true (fn []
                          (add-data-to-repl data {:selection-fn (fn []
-                                                                 (-> (d3/select-by-id id)
-                                                                     ))
-
+                                                                 (d3/select-by-id id))
                                                  :append-g? false
                                                  :duration-time 200
                                                  :x-start x
@@ -1402,11 +1537,18 @@
 ;; Evaluation
 ;;##########################################################
 
-(declare -evaluate)
+
 
 (def log-eval?
   (atom false))
 
+(defn log-eval
+  [form result]
+  (when @log-eval?
+        (println "=====================")
+        (pprint form)
+        (println "----->")
+        (pprint result)))
 
 
 (defn process-result
@@ -1436,22 +1578,17 @@
                        (macro? f) :macro
                        :else :s-exprs)))))
 
-
+(declare -evaluate)
 
 (defn evaluate
   [form env]
   (try
 
     (let [result (-evaluate form env)
+          
           result (if-not (form->id  result)
                    (process-result form result)
                    result)]
-
-      (when @log-eval?
-        (println "=====================")
-        (pprint form)
-        (println "----->")
-        (pprint result))
 
       (trace (tag-form form) form result env)
 
@@ -1598,137 +1735,6 @@
 
 
 
-;;#######################################################
-;; Treemap
-;;#######################################################
-
-(def stratify
-  (-> (js/d3.stratify)
-      (.id (fn [d] (:id d)))
-      (.parentId (fn [d] (:parent-id d)))))
-
-(def tree
-  (-> '(if (zero? 0) (+ 1 2) (* 3 4))
-      annotate-code-with-ids
-      form->d3-data
-      into-array
-      stratify))
-
-(defn node-get
-
-  ([d kw]
-   (get (.-data d) kw))
-
-  ([kw]
-   (fn [d]
-     (get (.-data d) kw))))
-
-(defn tree-add-default-properties
-  
-  [obj x-anchor y-anchor]
-  
-  (modify obj
-          
-          :font-size (get-cf-param :font-size)
-          
-          :id (fn [d]
-                (str "text-" (:id (.-data d))))
-          
-          :x (fn [d]
-               (+ x-anchor
-                  (* (get-cf-param :font-size)
-                     (get-cf-param :x-scale)
-                     (:x (.-data d)))))
-          
-          :y (fn [d]
-               (+ y-anchor
-                  (* (get-cf-param :font-size)
-                     (get-cf-param :y-scale)
-                     (:y (.-data d)))))
-          
-          :fill (fn [d]
-                  (let [{:keys [form bracket]} (.-data d)]
-                    (cond
-                      bracket "grey"
-                      (special? form) "purple"
-                      (number? form) "grey"
-                      (function? form) "blue"
-                      :else "black")))
-          
-          :opacity (fn [d]
-                     (let [{:keys [bracket]} (.-data d)]
-                       (if bracket
-                         0.4
-                         1)))))
-
-
-(defn add-clicker
-  []
-  (-> (js/d3.selectAll ".code")
-      (.on "click" (fn [node]
-                     
-                     (let [d (.-data node)]
-
-                       (pprint d)
-                       
-                       (when (:bracket d)
-
-                         (pprint d)
-
-                         (let [p (.-parent node)]
-                           
-                           (-> p
-                               (.each (fn [node]
-                                        
-                                        (let [id (:id (.-data node))]
-                                          
-                                          (-> (js/d3.select (str "#text-" id))
-                                              (.style "fill" "red")
-                                              (.transition)
-                                              (.duration 1000)
-                                              (.style "fill" "black")))))))))))))
-
-(defn build-tree []
-  (-> (get-repl)
-      (.selectAll "g")
-      (.data (.descendants tree))
-      (.enter)
-      (.append "text")
-      (.text (node-get :display))
-      (.classed "code" true)
-      (.transition)
-      (.duration 1000)
-      (tree-add-default-properties 0 100))
-
-  (add-clicker))
-
-(comment
-  (-> (js/d3.selectAll ".code")
-      (.on "click" (fn [node]
-                     
-                     (let [d (.-data node)]
-
-                       (pprint d)
-                       
-                       (when (:bracket d)
-
-                         (pprint d)
-
-                         (let [p (.-parent node)]
-                           
-                           (-> p
-                               (.each (fn [node]
-                                        
-                                        (let [id (:id (.-data node))]
-                                          
-                                          (-> (js/d3.select (str "#text-" id))
-                                              (.style "fill" "red")
-                                              (.transition)
-                                              (.duration 1000)
-                                              (.style "fill" "black")))))))))))))
-
-
-;;(add-default-properties 0 0)
 
 
 ;;#######################################################
@@ -1765,6 +1771,143 @@
     [:h1 "Animated Clojure"]
     (:outline state)]])
 
+(defn code->color
+  [code]
+  (cond 
+    (special? code) "purple"
+    (number? code) "grey"
+    (boolean? code) "grey"
+    (function? code) "blue"
+    :else "black"))
+
+(defn code->styles
+  [code]
+  {:id (-> code meta :id)
+   :fill (code->color code)
+   :class "code-tspan"
+   :opacity 1})
+  
+(defn code->tspans
+  
+  [code indent]
+  
+  (let [style (code->styles code)
+
+        code (add-newlines-&-indents code)
+
+        space [:tspan.space "  "]
+        tspan [:tspan style space]
+
+        letter-width 4
+        space-width 4
+        indent-width (* 4 space-width)
+        line-height 36
+
+        add-enclosings (fn [acc op cl]
+                         (let [styles {:opacity 0.3}]
+                           [[[:tspan#opening styles space op]]
+                            acc
+                            [[:tspan#closing styles space cl]]]) )
+
+        map-tspan (fn [code op cl]
+
+                    (loop [[c & cs :as code-seq] code
+                           indent (+ space-width letter-width space-width indent)
+                           x 0 
+                           acc []] 
+                      
+                      (cond
+
+                        (not (seq code-seq))
+
+                        (->> (add-enclosings acc op cl)
+                             (apply concat)
+                             (into tspan))
+
+                        (= ::indent c)
+                        (recur cs (+ indent-width indent) x acc)
+
+                        (= ::newline c)
+                        (let [ts (code->tspans c indent)]
+                          
+                          (recur cs indent 0 (conj acc ts)))
+
+                        :else
+                        (let [indent* (if (token? c)
+                                        indent
+                                        (+ indent x))
+                              
+                              ts (code->tspans c indent*)
+                              
+                              x  (cond
+
+                                   (const? c)
+                                   (+ x (+ space-width (* letter-width (count (str (:val c))))))
+                                   
+                                   (symbol? c)
+                                   (+ x (+ space-width (* letter-width (count (str c)))))
+                                   
+                                   :else x)]
+
+                          (recur cs           
+                                 indent
+                                 x
+                                 (conj acc ts))))))]
+    
+
+    (cond
+
+      (= ::newline code)
+      [:tspan.newline (assoc style
+                             :dy line-height
+                             :x indent
+                             :font-size 0)
+       " "]
+
+      (= ::indent code)
+      nil
+      
+
+      (const? code)
+      (conj tspan (str (:val code)))
+
+      (symbol? code)
+      (conj tspan (str code))
+
+      (list? code)
+      (map-tspan code "(" ")")
+
+      (vector? code)
+      (map-tspan code "[" "]")
+
+      (map? code)
+      (map-tspan (apply concat code) "{" "}")
+
+      (coll? code)
+      (map-tspan code "(" ")")
+      
+      :else
+      (conj tspan code))))
+
+
+(def code*
+  (conj [:text {:x 0 :y 100}]
+
+                   (-> '(let [x 1
+                              y 2]
+                          (if (+ 1 2 3)
+                            (fn [x]
+                              (+ x 1))
+                            (let [x 5
+                                  y (let [z 3
+                                          a b]
+                                      (+ 1 2 a b c))
+                                  r 3
+                                  t 4]
+                              (do 1 2 3))))
+                       (annotate-code-with-ids)
+                     
+                       (code->tspans 0))))
 
 (defn text-column
   
@@ -1776,9 +1919,33 @@
                :padding "20px 30px 30px 40px"
                :float "left"
                :font-size "12px"
-               :overflow "scroll"}]
+               :overflow "scroll"}
+
+        svg [:svg#temp
+           
+           {:height 800
+            :width text-width}
+
+            code*
+
+             (when false (conj
+                          
+
+                          [:text {:x 100 :y 300}]
+
+                          [:tspan  "(" 
+
+                           [:tspan "lmeon"]
+                           [:tspan "Eggs"]
+                           [:tspan {:dy 18
+                                    :x 0} "Toast"]
+                           [:tspan "Yo!"]]))]]
     
-    (into [:span#text {:style style}] (:hiccup text))))
+    ;;(conj [:div])
+
+          
+          
+    (into [:span#text {:style style} svg] (:hiccup text))))
 
 
 
