@@ -533,6 +533,7 @@
   [[op bindings & body]]
   
   (let [bindings* (loop [[sym val & rst :as b] bindings
+                         
                          acc (with-meta [] (meta bindings))]
                     
                     (if-not b
@@ -557,8 +558,8 @@
 ;; Building D3 Data from Code
 ;;#######################################################
 
-(declare form->d3-data*
-         coll->d3-data
+(declare code->data*
+         coll->data
          gen-token-data
          gen-coll-data
          gen-bracket-data)
@@ -580,21 +581,10 @@
    (form->d3-data form x y []))
 
   ([form x y acc]
-   
-   (let [form- (if (token? form)
-                form
-                (interleave (repeat ::newline)
-                            (repeat ::newline)
-                            form))
-         data (form->d3-data* form x y acc)
-         data (if (vector? data)
-                data
-                [data])]
-
-     data)))
+   (code->data* form x y acc)))
 
 
-(defn form->d3-data*
+(defn code->data*
  
   [form x y data]
   
@@ -602,9 +592,9 @@
     
     (gen-token-data form x y)
 
-    (coll->d3-data form x y data)))
+    (coll->data form x y data)))
      
-(defn coll->d3-data
+(defn coll->data
   
   [form x y data]
   
@@ -635,10 +625,10 @@
 
               ;; create bracket data
               [op cl] (gen-bracket-data form
-                                   x0
-                                   y0
-                                   x-end
-                                   y-end)
+                                        x0
+                                        y0
+                                        x-end
+                                        y-end)
 
               data (conj data op cl)
               
@@ -677,11 +667,15 @@
                  data))
         
         (= e ::newline)
-        (recur es
-               indent ;; return x to indent position
-               (inc y)
-               indent
-               data)
+        (let [nl {:display " "
+                  :newline true
+                  :x indent
+                  :dy (inc y)}]
+          (recur es
+                 indent ;; return x to indent position
+                 (inc y)
+                 indent
+                 data))
         
         (= e ::indent)
         (recur es
@@ -690,18 +684,12 @@
                (+ indent (:indent spaces))
                data)
 
-        :else
-        (let [element-data (form->d3-data* e x y data)
+        :regular-element
+        (let [frames (code->data* e x y data)
 
-              [final-frame data] (if (vector? element-data)
-                                   
-                                   (vector (last element-data)
-                                           (into data element-data))
-                                   
-                                   (vector element-data
-                                           (conj data element-data)))
+              [last-fr data] [(last frames) (into data frames)]
 
-              {:keys [x-end y-end]} final-frame
+              {:keys [x-end y-end]} last-fr
 
               ;; Increment to adjust for space between tokens
               x-end (+ (:between-tokens spaces) x-end)]
@@ -724,12 +712,14 @@
               form)
         l (length val)
         m (meta form)]
-    
-    (assoc m
-           :x x
-           :y y
-           :x-end (+ x l)
-           :y-end y)))
+
+    (vector
+     
+     (assoc m
+            :x x
+            :y y
+            :x-end (+ x l)
+            :y-end y))))
 
 (defn gen-coll-data
   [form x y x-end y-end]
