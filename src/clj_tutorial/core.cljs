@@ -419,7 +419,7 @@
 
     (clojure.walk/walk (partial postwalk* f*) f* form)))
 
-(defn annotate-code-with-ids
+(defn add-ids
   [code]
   (letfn [(annotate [code]
             
@@ -442,14 +442,7 @@
 ;; Adding Newlines & Indents
 ;;#######################################################
 
-
-(def special-forms
-  
-  "With some macros thrown in!"
-  
-  '#{if cond do fn defn let loop})
-
-(defmulti add-newlines-&-indents
+(defmulti add-x-y
   
   (fn [form]
     
@@ -457,18 +450,24 @@
       
       (vector? form) :vector
       
-      (list? form) (let [[f & _] form]
-                     (get special-forms f :s-exprs)))))
+      (list? form) (let [special? '#{if cond do fn defn}
+                         binding? '#{loop let}
+                         [f & _] form]
+                     (cond
+
+                       (special? f) f
+                       (binding? f) 'binding-forms
+                       :else :s-exprs)))))
 
 
 
-(defmethod add-newlines-&-indents :default
+(defmethod add-x-y :default
   [form]
   form)
 
 (defrecord Newline-Indent [size])
 
-(defmethod add-newlines-&-indents :s-exprs
+(defmethod add-x-y :s-exprs
   [[f & args :as form]]
   
   (if (some (complement token?) args)
@@ -479,7 +478,7 @@
       (list* f (interleave args nl-indent)))
     form))
 
-(defmethod add-newlines-&-indents 'if
+(defmethod add-x-y 'if
   [[op pred then else]]
   
   (let [v [op pred ::newline ::indent then]
@@ -492,7 +491,7 @@
 
     (list* v)))
 
-(defmethod add-newlines-&-indents 'cond
+(defmethod add-x-y 'cond
   [[op & forms]]
   (let [insert-newline-between (fn [[pred then]]
                                  [pred ::newline then])
@@ -506,14 +505,14 @@
            ::indent
            spaced-pairs)))
 
-(defmethod add-newlines-&-indents 'do
+(defmethod add-x-y 'do
   [[op & statements]]
   (list* op
          ::indent
          (interleave (repeat ::newline)
                      statements)))
 
-(defmethod add-newlines-&-indents 'fn
+(defmethod add-x-y 'fn
   [[op params & body]]
   (list* op
          params
@@ -521,7 +520,7 @@
          ::indent
          (butlast (interleave body (repeat ::newline)))))
 
-(defmethod add-newlines-&-indents 'defn
+(defmethod add-x-y 'defn
   [[op fname params & body]]
   (list* op
          fname
@@ -530,7 +529,7 @@
          ::indent
          (interleave body (repeat ::newline))))
 
-(defn add-newlines-&-indents-to-binding-form
+(defmethod add-x-y 'binding-forms
   [[op bindings & body]]
   
   (let [bindings* (loop [[sym val & rst :as b] bindings
@@ -546,17 +545,9 @@
            bindings*
            ::newline
            ::indent
-           body
-           ;;(interleave body (repeat ::newline))
-           )))
+           body)))
 
-(defmethod add-newlines-&-indents 'let
-  [form]
-  (add-newlines-&-indents-to-binding-form form))
 
-(defmethod add-newlines-&-indents 'loop
-  [form]
-  (add-newlines-&-indents-to-binding-form form))
 
 
 
@@ -572,10 +563,13 @@
          gen-coll-data
          gen-bracket-data)
 
-(def spaces-per-indent 1.5)
-(def space-between-tokens 2)
-(def space-after-opening-bracket 0.5)
-(def space-before-closing-bracket 0.5)
+(def spaces
+  {:indent 1.5
+   :after-opening 0.5
+   :before-closing 0.5
+   :between-tokens 2})
+
+
 
 (defn form->d3-data
   ([form]
@@ -614,14 +608,14 @@
   
   [form x y data]
   
-  (let [form-w-newlines-&-indents (add-newlines-&-indents form)
+  (let [form* (add-x-y form)
         
-        [x-original y-original] [x y]
+        [x0 y0] [x y]
 
         ;; Adjust for the opening bracket
-        x (+ x 1 space-after-opening-bracket)]
+        x (+ x 1 (:after-opening spaces))]
 
-    (loop [[e & es :as elements] form-w-newlines-&-indents
+    (loop [[e & es :as elements] form*
            x x
            y y
            indent x
@@ -636,13 +630,13 @@
 
         (not (seq elements))
         (let [{:keys [x-end y-end]
-               :or {x-end (+ space-between-tokens x-original)
-                    y-end y-original}} (last data)
+               :or {x-end (+ (:between-tokens spaces) x0)
+                    y-end y0}} (last data)
 
               ;; create bracket data
               [op cl] (gen-bracket-data form
-                                   x-original
-                                   y-original
+                                   x0
+                                   y0
                                    x-end
                                    y-end)
 
@@ -657,12 +651,12 @@
                          data)
               
               ;; Adjust for closing bracket
-              x-end (+ x-end space-between-tokens space-before-closing-bracket)
+              x-end (+ x-end (:between-tokens spaces) (:before-closing spaces))
 
               ;; create coll data
               coll-data (gen-coll-data form
-                                       x-original
-                                       y-original
+                                       x0
+                                       y0
                                        x-end
                                        y-end)
 
@@ -675,7 +669,7 @@
           (conj data coll-data))
 
         (instance? Newline-Indent e)
-        (let [indent* (+ indent (* spaces-per-indent (:size e)))]
+        (let [indent* (+ indent (* (:indent spaces) (:size e)))]
           (recur es
                  indent*
                  (inc y)
@@ -691,9 +685,9 @@
         
         (= e ::indent)
         (recur es
-               (+ x spaces-per-indent)
+               (+ x (:indent spaces))
                y
-               (+ indent spaces-per-indent)
+               (+ indent (:indent spaces))
                data)
 
         :else
@@ -710,7 +704,7 @@
               {:keys [x-end y-end]} final-frame
 
               ;; Increment to adjust for space between tokens
-              x-end (+ space-between-tokens x-end)]
+              x-end (+ (:between-tokens spaces) x-end)]
 
           (recur es
                  x-end
@@ -774,14 +768,8 @@
             {:display cl
              :id (gen-id "closing-")
              :bracket :closing
-             :x (+ x-end space-before-closing-bracket)
+             :x (+ x-end (:before-closing-bracket spaces))
              :y y-end})))
-
-
-(def toast
-  (annotate-code-with-ids '(if (zero? 1)
-                             a
-                             b)))
 
 ;;#######################################################
 ;; Adding Code to Dom
@@ -865,9 +853,7 @@
    (get-repl config))
   
   ([cf]
-   (-> (d3/select-by-id (cf :svg-id))
-       (.attr "height" (cf :svg-height))
-       (.attr "width" (cf :svg-width)))))
+   (d3/select-by-id (cf :svg-id))))
 
 (defn clear-repl!
   []
@@ -1164,8 +1150,7 @@
  
       (add-data-to-repl (:data params))
       
-      (let [forms (map annotate-code-with-ids forms)
-
+      (let [forms (map add-ids forms)
           
             data (form->d3-data (interleave forms (repeat ::newline))  0 0)
 
@@ -1439,7 +1424,7 @@
                   :default)
 
             result- (if-not (:id (meta result))
-                      (annotate-code-with-ids result)
+                      (add-ids result)
                       result)
 
             frame {:form form
@@ -1554,7 +1539,7 @@
 (defn process-result
   [form result]
   
-  (let [result (annotate-code-with-ids result)]
+  (let [result (add-ids result)]
 
     result))
 
@@ -1786,6 +1771,7 @@
    :fill (code->color code)
    :class "code-tspan"
    :opacity 1})
+
   
 (defn code->tspans
   
@@ -1793,7 +1779,7 @@
   
   (let [style (code->styles code)
 
-        code (add-newlines-&-indents code)
+        code (add-ids code)
 
         space [:tspan.space "  "]
         tspan [:tspan style space]
@@ -1905,7 +1891,7 @@
                                   r 3
                                   t 4]
                               (do 1 2 3))))
-                       (annotate-code-with-ids)
+                       (add-ids)
                      
                        (code->tspans 0))))
 
