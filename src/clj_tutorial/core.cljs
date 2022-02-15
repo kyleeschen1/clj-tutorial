@@ -7,7 +7,7 @@
                                                     populate-outline-with-headers!]]
 
   
-   [clj-tutorial.interpreter.tracer :as t]
+  ;; [clj-tutorial.interpreter.tracer :as t]
    [clj-tutorial.code-to-hiccup :refer [code->hiccup]]
    [clj-tutorial.parser :refer [string->code]]
 
@@ -16,6 +16,8 @@
    [clojure.repl :refer [source]]
    [clojure.pprint :refer [pprint]]
    [clojure.walk :refer [walk prewalk postwalk]]
+   [cljs.test :refer [deftest is testing]]
+   [clojure.zip :as z]
 
    [cljs.core.async :refer [chan close! >! <! put!]]
 
@@ -2531,25 +2533,201 @@
        (assoc state :done? true) )})
 
 (defn eval-cps
+  
+  "Returns a lazy stream of
+   evaluation frames."
+  
   [form]
-  (letfn [(-eval-cps [state]
+  
+  (letfn [(postprocess [state]
+            
+            (if-not (:postprocess? state)
+              
+              state
+
+              (-> state
+                  (assoc :postprocess? false)
+                  (update :result add-ids))))
+          
+          (-eval-cps [state]
 
             (let [state (-eval state)]
 
               (cond
 
-                (:done? state) nil
+                (:done? state)
+                nil
 
-                (:error state) [state]
+                (:error state)
+                [state]
 
-                :else (let [state (if (:postprocess? state)
-                                    (update state :result add-ids)
-                                    state)]
-                        
-                        (cons state
-                              (lazy-seq (-eval-cps state)))))))]
+                :else
+                (let [state (postprocess state)]
+                  
+                  (cons state
+                        (lazy-seq (-eval-cps state)))))))]
 
     (-eval-cps (init-eval form))))
+
+
+(def results
+  (eval-cps '(do
+
+               (def s-exprs
+                 (+ 1 2 (* 3 4)))
+
+               (def f
+                 (fn [x]
+                   (+ 1 x)))
+
+               (def apply-f
+                 (f 1))
+
+               (def gen-fn
+                 (fn [add-to]
+                   (fn [x]
+                     (+ add-to x))))
+
+               (def f
+                 (gen-fn 17))
+
+               (def apply-f*
+                 (f 1))
+               
+               (def let-bindings
+                 
+                 (let [x (+ 1 2)
+                       y (+ 1 x)
+                       x (+ y x)]
+                   
+                   (+ x y)))
+
+               (def letfn-bindings
+                 
+                 (letfn [(odd? [x]
+                           (if (zero? x)
+                             false
+                             (even? (dec x))))
+                         
+                         (even? [x]
+                           (if (zero? x)
+                             true
+                             (odd? (dec x))))]
+                   
+                   (odd? 4)))
+
+               (def loop-bindings
+                 
+                 (loop [x 3
+                        acc 0]
+                   
+                   (if (zero? x)
+                     
+                     acc
+                     
+                     (recur (dec x)
+                            (inc acc)))))
+
+               {:s-exprs s-exprs
+                :apply-f apply-f
+                :closure-apply-f apply-f*
+                :let-bindings let-bindings
+                :letfn-bindings letfn-bindings
+                :loop-bindings loop-bindings})))
+
+
+;;#######################################################
+;; Hiccup Interpreter
+;;#######################################################
+
+(defmulti code->spans
+  
+  (fn [code]
+    
+    (cond
+      (list? code) :list
+      (vector? code) :vector
+      (map? code) :map
+      (set? code) :set
+      (coll? code) :list
+      :else :token)))
+
+(defmethod code->spans :token
+  [code]
+  [:span {:id (gensym "token-")
+          :form code}
+   (str code)])
+
+(defmethod code->spans :list
+  [code]
+  (into
+   [:span {:id (gensym "token-")
+           :form code}]
+
+   (apply concat
+          [
+           [[:span.opening "("]]
+           
+           (mapv code->spans code)
+           
+           [[:span.closing ")"]]
+
+           ])))
+
+
+(defn hiccup->zipper
+
+  "Creates a zipper for
+   nested hiccup vectors."
+  
+  [form]
+  
+  (letfn [(branch?
+            [form]
+            (> (count form) 3))
+          
+          (children [form]
+            (->> form
+                 (pop)    ;; removes closing bracket
+                 (rest)   ;; removes opening div
+                 (rest)   ;; removes property map
+                 (rest))) ;; removes opening bracket
+        
+          (make-node [branch leaves]
+            
+            (let [closing (peek branch)]
+              
+              (-> (pop branch)
+                  (into leaves)
+                  (conj closing))))]
+    
+    (z/zipper branch? children make-node form)))
+
+
+(comment
+
+  (defn add-ids
+    [form]
+    (letfn ))
+
+  (defn update-params
+    [params body]
+    (let [f (fn [form]
+              )]
+      
+      (postwalk f body)))
+
+  (defn factorial
+    [n]
+    (if (< n 2)
+      1
+      (tag {:tag :replace
+            :indent 1
+            :newline 2}
+           (* n     
+             (tag {:tag :fn-expand}
+                  (factorial (dec n))))))))
+
 
 ;;#######################################################
 ;; Main Page Columns
