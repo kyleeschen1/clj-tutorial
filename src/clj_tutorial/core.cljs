@@ -622,12 +622,6 @@
           bindings*
           (Pos. 1 1 body))))
 
-
-
-
-
-
-
 ;;#######################################################
 ;; Building D3 Data from Code
 ;;#######################################################
@@ -1261,7 +1255,7 @@
         (-> (js/d3.selectAll ".code")
             (.filter descendant?))))))
 
-(defn add-clicker*
+(defn add-click!
   []
   (-> (js/d3.selectAll ".code")
       (.on "hover" (fn [d]
@@ -1270,7 +1264,7 @@
 
                      (let [selection (if (:bracket d)
                                        (select-descendants-by-id (:parent-id d))
-                                       (js/d3.selectAll (str "#" (:id d))))]
+                                       (js/d3.selectAll (str (:id d))))]
                        
                        (-> selection
                            (.style "fill" "red")
@@ -1299,6 +1293,7 @@
                  y-start
                  x-anchor
                  y-anchor]
+          
           :or {selection-fn (fn [] (js/d3.select "#repl"))
                id-prefix ""
                append-g? true
@@ -1367,7 +1362,11 @@
                               0.4
                               1))))))
 
-
+(let [x (+ 1 2)
+      y (- 3 4)]
+  (if (zero? x)
+    1
+    (+ 3 4)))
 
 ;;######################################################
 ;; Async
@@ -1714,67 +1713,83 @@
     (replace-selection-with-result s result)))
 
 
+(defn id->attr
+  [id attr]
+  (-> (d3/select-by-id (str "text-" id))
+      (.attr (name attr))
+      (js/parseInt)))
+
 (defmethod gen-animation-fn :if
   [{:keys [form result env id] :as frame}]
-  
-  (let [s 
-        (fn []
-          (let [result-id (:id (meta result))
-                result-child-ids (-> (d3/select-by-id result-id)
-                                     (.datum)
-                                     :child-ids)
-
-                result-child-ids (if result-child-ids
-                                   (conj result-child-ids result-id)
-                                   #{result-id})
-
-                in-result? (fn [id]
-                             (result-child-ids id))]
-
-          
-            (-> (select-descendants-by-id id)
-                (.filter (fn [{:keys [id]}]
-                           (not (in-result? id))))
-                (.transition)
-                (.duration 1000)
-                (.style "opacity" 0)) ))]
+ 
 
 
-    (add-event! true s)
+  (add-event! true (fn []
+                     (let [result-id (:id (meta result))
+                           result-child-ids (-> (d3/select-by-id result-id)
+                                                (.datum)
+                                                :child-ids)
 
-    (add-event! true (fn []
+                           result-child-ids (if result-child-ids
+                                              (conj result-child-ids result-id)
+                                              #{result-id})
 
-                       (let [selection (d3/select-by-id id)
-                             [x y] (selection->attrs selection :x :y)
+                           in-result? (fn [id]
+                                        (result-child-ids id))]
 
-                             result-id (:id (meta result))
-                             result-selection (d3/select-by-id result-id)
-                             
-                             [current-x current-y] (selection->attrs result-selection :x :y)
-                             
-                             dx (- x current-x)
-                             dy (- y current-y)]
+                       
+                       (-> (select-descendants-by-id id)
+                           (.filter (fn [{:keys [id]}]
+                                      (not (in-result? id))))
+                           (.transition)
+                           (.duration 1000)
+                           (.style "opacity" 0)))))
+
+  (add-event! true (fn []
+
+                     (let [selection (d3/select-by-id id)
+                           [target-x target-y] (selection->attrs selection :x :y)
+
+                           result-id (:id (meta result))
+                           result-selection (d3/select-by-id result-id)
+                           [current-x current-y] (selection->attrs result-selection :x :y)
+                           
+
+                           gen-fn (fn [target current attr]
+                                    
+                                    (let [delta (- target current)]
+                                      
+                                      (fn [{:keys [id] :as d}]
+                                        
+                                        (let [current (id->attr id attr)]
+                                          
+                                          (+ delta current)))))
+                           
+                           dx (gen-fn target-x current-x "x")
+                           dy (gen-fn target-y current-y "y")
+
+                           valid?  (fn [{:keys [id] :as d}]
+                                     
+                                      (let [x (id->attr id 'x)
+                                            y (id->attr id 'y)]
+                                        
+                                        (and (> x current-x)
+                                             (>= y current-y))))]
+
+                       (-> (js/d3.selectAll ".code text")
+                           (.filter valid?)
+                           (.transition)
+                           (.duration 1000)
+                           (.attr "x" dx)
+                           (.attr "y" dy))
 
 
-                         (-> (select-descendants-by-id result-id)
-                             (.selectAll ".code text")
-                             
-                             (.transition)
-                             (.duration 1000)
-                          
-                             (.attr "x" (fn [{:keys [id]}]
-                                                     
-                                          (let [x (-> (d3/select-by-id (str "text-" id))
-                                                      (.attr "x")
-                                                      (js/parseInt))]            
-                                            (+ dx x))))
-                             
-                             (.attr "y" (fn [{:keys [id]}]
-                                         
-                                          (let [y (-> (d3/select-by-id (str "text-" id))
-                                                      (.attr "y")
-                                                      (js/parseInt))]
-                                            (+ dy y))))))))))
+                       (-> (select-descendants-by-id result-id)
+                           (.selectAll ".code text")
+                           (.transition)
+                           (.duration 1000)
+                           (.attr "x" dx)
+                           (.attr "y" dy))))))
 
 
 
@@ -2196,15 +2211,18 @@
         (map? form) :map
         (vector? form) :vector
         (set? form) :set
-        (list? form) (let [special? '#{if do fn def let letfn loop recur throw quote}
-                           [f & _] form]
+        (seq? form) (let [special? '#{if do fn def let letfn loop recur throw quote}
+                          [f & _] form]
                        (cond
                          (special? f) (keyword f)
                          :else :invoke))))))
 
 (defmethod -eval :default
-  [state]
-  state)
+  [{:keys [k form] :as state}]
+  (assoc state
+         :type :constant
+         :result form
+         :resolves form))
 
 (defmethod -eval :apply-continuation
   [{:keys [k] :as state}]
@@ -2298,75 +2316,150 @@
   (and (coll? f)
        (= 'fn (first f))))
 
+(defn inject-params
+  
+  [params args body]
+  
+  (let [bindings (zipmap params args)
+
+        syms (atom [])
+        
+        inject-params (fn [form]
+                        (if-let [value (and (symbol? form)
+                                            (get bindings form))]
+                          (do
+                            (swap! syms conj {form value})
+                            value)
+                          
+                          form))
+
+        
+        body (postwalk inject-params body)]
+    
+    [@syms body]))
+
 (defn eval-fn-led-exprs
   [f args env state form]
   
   (let [[_ params body] f
         
-        lexical-env (:lexical-env (meta f))
+        [syms body] (inject-params params args body)
         
-        env (-> env
-                (update :locals merge (:locals lexical-env))
-                (update :locals merge (zipmap params args)))]
+        rp {:body body
+            :params params
+            :param-count (count params)}]
+
     
     (assoc state
            :type :fn-body
+           :syms syms
            :resolves form
            :tail-position? true
-           :recur-point {:body body :params params :param-count (count params)}
+           :recur-point rp
            :form body
            :env env)))
 
+(defn thread-ks1
+  
+  [state k]
+  
+  (let [{:keys [form env fn-mode]}  state]
+    
+    (loop [[a & as :as forms] (reverse form)
+           k k]
 
+      (if-not (seq as)
+
+        {:form a
+         :env env
+         :fn-mode fn-mode
+         :tail-position? false
+         :acc []
+         :k k}
+
+        (recur as
+
+               (fn [{:keys [result acc]}]
+                 
+                 {:form a
+                  :env env
+                  :fn-mode fn-mode
+                  :tail-position? false
+                  :acc (conj acc result)
+                  :k k}))))))
 
 (defmethod -eval :invoke
-  [{:keys [form env k] :as state}]
-  
-  (thread-ks form
+  [{:keys [form env fn-mode] :as state}]
+ 
+  (thread-ks1 state
              
-             env
-             
-             (fn [{:keys [result acc]}]
+              (fn [{:keys [result acc]}]
 
-               (let [acc (conj acc result)
-                     [f & args] acc]
+                (let [acc (conj acc result)]
+            
+                  (if fn-mode
+                    
+                    (assoc state
+                           :result (with-meta (seq acc) (meta form))
+                           :resolves form)
+                    
+                    (let [[f & args] acc]
 
-                 (if (fn-led? f)
+                      (if-not f
+                     
+                        (assoc state
+                               :result acc
+                               :resolves form)
 
-                   (eval-fn-led-exprs f args env state form)
+                        (if (fn-led? f)
 
-                   (assoc state
-                          :result (apply f args)
-                          :resolves form
-                          :postprocess? true))))))
+                          (eval-fn-led-exprs f args env state form)
+
+                          (assoc state
+                                 :result (apply f args)
+                                 :resolves form
+                                 :postprocess? true)))))))))
 
 (defmethod -eval :if
-  [{:keys [form] :as state}]
-  
-  (let [[_ pred then else] form]
+  [{:keys [form fn-mode] :as state}]
 
-    (assoc state
-           
-           :form pred
-           
-           :tail-position? false
-           
-           :k (fn [{:keys [result]} ]
+  (if fn-mode
+    
+    (thread-ks1 (assoc state :form (rest form))
                 
-                (let [branch (if (get-val result)
-                               then
-                               else)]
+                (fn [{:keys [acc result]}]
+                  (let [form* (cons (first form)
+                                    (seq (conj acc result)))
+                        form* (with-meta form* (meta form))]
+                    
+                    (assoc state
+                           :resolves form
+                           :result form*))))
+    
+    (let [[_ pred then else] form]
+
+      (assoc state
+             
+             :form pred
+             
+             :tail-position? false
+             
+             :k (fn [{:keys [result]} ]
                   
-                  (assoc state
-                         
-                         :form branch
-                         
-                         :type :branch
-                         
-                         :resolves form))))))
+                  (let [branch (if (get-val result)
+                                 then
+                                 else)]
+                    
+                    (assoc state
+                           
+                           :form branch
+                           
+                           :type :branch
+                           
+                           :resolves form)))))))
 
 (defmethod -eval :let
-  [{:keys [form env] :as state}]
+  [{:keys [form env fn-mode] :as state}]
 
   (let [[_ bindings body] form]
 
@@ -2388,6 +2481,7 @@
                      {:form val
                       :sym sym
                       :env env
+                      :fn-mode fn-mode
                       :type :binding-form
                       :tail-position? false
                       :k (fn [{:keys [sym result env]}]
@@ -2396,7 +2490,9 @@
                             :binds-to sym
                             :resolves val
                             :result result
-                            :env (assoc-in env [:locals sym] result)
+                            :env (if fn-mode
+                                   (assoc-in env [:locals sym] sym)
+                                   (assoc-in env [:locals sym] result))
                             :k k})}))))))
 
 (defmethod -eval :loop
@@ -2453,9 +2549,14 @@
         bindings (map (fn [[fname & body :as f]]
                         [fname (cons 'fn body)])
                       bindings)
+        fnames (map first bindings)
+        
         bindings (apply concat bindings)
 
-        state (assoc state :form (list* 'let bindings body))]
+        
+        state (assoc state
+                     :form (list* 'let bindings body)
+                     :env (update env :locals merge (zipmap fnames fnames)))]
 
     (-eval state)))
 
@@ -2490,20 +2591,51 @@
              (reverse statement-fns))
      state)))
 
+(defn sym->hygenic
+  [sym]
+  (with-meta (gensym (str  sym "_")) (meta sym)))
+
 (defmethod -eval :fn
   [{:keys [form env] :as state}]
   
-  (let [form (vary-meta form assoc :lexical-env env)]
-    
-    (assoc state
-           :resolves form
-           :result form)))
+  (let [[op & rst] form
+        
+        fn-body (if (symbol? (first rst))
+                rst
+                (cons nil rst))
+        
+        [fname params & body] fn-body
+        
+        env (if fname
+              (assoc-in env [:locals fname] fname)
+              env)
+        
+        hygenic-params (mapv sym->hygenic params)
+        params* (zipmap params hygenic-params)
+
+        k (fn [{:keys [result]}]
+            
+            (let [form* (list op hygenic-params result)
+                  form* (with-meta form* (meta form))]
+              
+              (assoc state
+                     :resolves form
+                     :result form*)))]
+
+    {:form (cons 'do body)
+     :env (update env :locals merge params*)
+     :k k
+     :tail-position? true
+     :fn-mode true}))
 
 (defmethod -eval :def
   
   [{:keys [form env] :as state}]
   
-  (let [[_ sym value] form]
+  (let [[_ sym value] form
+        value (if (fn-led? value)
+                (with-meta (list* 'fn sym (rest value)) (meta value))
+                value)]
     
     {:form value
      :env env
@@ -2538,36 +2670,60 @@
    evaluation frames."
   
   [form]
-  
-  (letfn [(postprocess [state]
-            
-            (if-not (:postprocess? state)
+
+  (let [counter (atom 0)]
+    
+    (letfn [(postprocess [state]
               
-              state
+              (if-not (:postprocess? state)
+                
+                state
 
-              (-> state
-                  (assoc :postprocess? false)
-                  (update :result add-ids))))
-          
-          (-eval-cps [state]
+                (-> state
+                    (assoc :postprocess? false)
+                    (update :result add-ids))))
+            
+            (-eval-cps [state]
 
-            (let [state (-eval state)]
+              (if (> @counter 1000)
 
-              (cond
+                state
 
-                (:done? state)
-                nil
+                (let [state (-eval state)]
 
-                (:error state)
-                [state]
+                  (swap! counter inc)
 
-                :else
-                (let [state (postprocess state)]
+                  (cond
+
+                    (:done? state)
+                    nil
+ 
+                    (:error state)
+                    [state]
+
+                    :else
+                    (let [state (postprocess state)]
+                      
+                      (cons state
+                            (lazy-seq (-eval-cps state))))))))]
+
+      (-eval-cps (init-eval form)))))
+
+(defn narrow
+  [frames]
+  (let [sieve (fn [frame]
+                 
+                 (and
                   
-                  (cons state
-                        (lazy-seq (-eval-cps state)))))))]
-
-    (-eval-cps (init-eval form))))
+                  (not (and (= :symbol (:type frame))
+                            (fn? (:result frame))))
+                  
+                  (not= :constant (:type frame))
+                  
+                  (:result frame)))]
+    (->> frames
+         (map sieve)
+         (filter identity))))
 
 
 (def results
@@ -2593,6 +2749,12 @@
 
                (def apply-f*
                  (f 1))
+
+               (def factorial
+                 (fn [n]
+                   (if (zero? n)
+                     1
+                     (* n (factorial (dec n))))))
                
                (def let-bindings
                  
@@ -2633,7 +2795,11 @@
                 :closure-apply-f apply-f*
                 :let-bindings let-bindings
                 :letfn-bindings letfn-bindings
-                :loop-bindings loop-bindings})))
+                :loop-bindings loop-bindings
+                :factorial (factorial 5)})))
+
+(def results-narrowed
+  (narrow results))
 
 
 ;;#######################################################
@@ -2809,7 +2975,7 @@
                 
                   :padding "0px 0px"
                   :z-index 1
-                ;;  :width repl-width
+                ;;  :width repl-widthnn
                ;;   :height "800px"
                   :flex "50%"
 
@@ -2833,6 +2999,12 @@
 
 
 
+
+
+
+
+
+
 (defn main [page]
     
   [:div {:style {:display "flex"
@@ -2841,7 +3013,9 @@
 
    (text-column page)
    (sidebar page)
-   (repl-column) ])
+   (repl-column)
+  ;; (repl)
+   ])
 
 
 ;;##########################################################################
@@ -3097,7 +3271,7 @@
   (when-let [el (get-app-element)]
     (mount el)
     (add-scroll-triggers! page*)
-    ;;(add-click!)
+    (add-click!)
     ))
 
 ;; conditionally start your application based on the presence of an "app" element

@@ -1,4 +1,5 @@
 
+
 (ns ^:figwheel-hooks clj-tutorial.code-to-hiccup
   (:require
    [clj-tutorial.utils :as u]))
@@ -51,7 +52,7 @@
 
         [op cl] (map (fn [s]
                        (assoc s :id
-                              () (form->id form)))
+                               (form->id form)))
                      [op cl])]
 
     [op cl]))

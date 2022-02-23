@@ -11,6 +11,7 @@
                  [reagent "0.10.0" ]
                  [org.clojure/core.async "1.3.610"]
                  [cljsjs/d3 "4.12.0-0"]
+                 [cljsjs/react-with-addons "15.2.1-0"]
                  [cljsjs/waypoints "4.0.1-0"]
                  [instaparse "1.4.10"]
                  [borkdude/edamame "0.0.11"]]
