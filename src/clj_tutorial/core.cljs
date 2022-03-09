@@ -850,12 +850,14 @@
     (vector {:display op
              :id (gen-id "opening-")
              :bracket :opening
+             :parent-id id
              :x x
              :y y}
             
             {:display cl
              :id (gen-id "closing-")
              :bracket :closing
+             :parent-id id
              :x  cl-x
              :dx (:before-closing spaces)
              :y y-end
@@ -1252,25 +1254,88 @@
       (let [descendant? (fn [d]
                           (child-ids (:id d)))]
 
-        (-> (js/d3.selectAll ".code")
+        (-> (js/d3.selectAll "text")
             (.filter descendant?))))))
+
+(defn *add-x-y
+  [sel]
+  (let [x-anchor 0
+        y-anchor 100]
+    (-> sel
+        (.attr "x" (fn [d]
+                     (+ x-anchor
+                        (* (get-cf-param :font-size)
+                           (get-cf-param :x-scale)
+                           (:x d)))))
+        
+        (.attr "y"  (fn [d]
+                   
+                      (+ y-anchor
+                         (* (get-cf-param :font-size)
+                            (get-cf-param :y-scale)
+                            (:y d))))))))
+
+(defn *id->attr
+  [id attr]
+  (-> (d3/select-by-id (str "text-" id))
+      (.attr (name attr))
+      (js/parseInt)))
+
+
 
 (defn add-click!
   []
-  (-> (js/d3.selectAll ".code")
+  (-> (js/d3.selectAll "text")
       (.on "hover" (fn [d]
                      (js/console.log d)))
       (.on "click" (fn [d]
 
+
                      (let [selection (if (:bracket d)
                                        (select-descendants-by-id (:parent-id d))
-                                       (js/d3.selectAll (str (:id d))))]
-                       
-                       (-> selection
-                           (.style "fill" "red")
-                           (.transition)
-                           (.duration 2000)
-                           (.style "fill" "black")))))))
+                                       (js/d3.selectAll (str "text-" (:id d))))
+
+                           dur (fn [{:keys [x]}]
+                                 (* 50 x))
+                           
+                           pid (:parent-id d)
+                           [x y] (map (partial *id->attr pid) '[x y])]
+
+                       (go
+
+                         (<! (let [c (chan)]
+                               
+                               (-> selection
+                                   (.transition)
+                                   (.duration dur)
+                                   (.attr "x" x)
+                                   (.attr "y" y)
+                                   (.on "end" (fn []
+                                                (close! c))))
+
+                               c))
+
+                         (<! (let [c (chan)]
+                               (-> selection
+                                   (.transition)
+                                   (.delay 1500)
+                                   (.duration dur)
+                                   (.attr "x" 400)
+                                   (.attr "y" 100)
+                                   (.on "end" (fn []
+                                                (close! c))))
+                               c))
+
+                         (<! (let [c (chan)]
+                               
+                               (-> selection
+                                   (.transition)
+                                   (.delay 1500)
+                                   (.duration 1000)
+                                   (*add-x-y)
+                                   (.on "end" (fn []
+                                                (close! c))))
+                               c))))))))
 
 
 
@@ -1316,8 +1381,9 @@
        (.attr "id" (fn [d]
                      (str id-prefix (:id d))))
 
+       
        (.append "text")
-       (.classed "code" true)
+      ;; (.classed "code" true)
        (.style "font-size" 0)
        (.attr "x" x-start)
        (.attr "y" y-start)
@@ -1360,13 +1426,16 @@
        (.style  "opacity" (fn [{:keys [bracket]}]       
                             (if bracket
                               0.4
-                              1))))))
+                              1)))
+      #_(.on "click" (fn [{:keys [bracket id]}]
+                      (let [sel (if-not bracket
+                                  (d3/select-by-id id)
+                                  (let [id ()]
+                                    (select-descendents-by-id id)))])
+                      (if bracket
+                        ))))))
 
-(let [x (+ 1 2)
-      y (- 3 4)]
-  (if (zero? x)
-    1
-    (+ 3 4)))
+
 
 ;;######################################################
 ;; Async
