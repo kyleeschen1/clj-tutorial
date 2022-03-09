@@ -1620,7 +1620,7 @@
   (-> (js/d3.selectAll ".under-evaluation")
       (.classed "under-evaluation" false)
       (.transition)
-      (.duration 1500)
+      (.duration 1000)
       (.style "stroke" nil)))
 
 (defn highlight
@@ -1628,7 +1628,7 @@
   (-> obj
       (.classed "under-evaluation" true)
       (.transition)
-      (.duration 1500)
+      (.duration 1000)
       (.style "stroke" "red")))
 
 (defmethod gen-animation-fn :default
@@ -2031,7 +2031,7 @@
           
           result (process-eval-result tag result)]
 
-      (log-eval form result env)
+      ;;(log-eval form result env)
 
       (trace tag form result env)
 
