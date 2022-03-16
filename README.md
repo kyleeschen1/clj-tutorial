@@ -1,4 +1,6 @@
-# Animated Clojure Tutorial
+# Ouroboros
+
+Ouroboros is a model for a "kinetic textbook" which 
 
 
 
