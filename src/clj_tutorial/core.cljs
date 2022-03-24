@@ -27,12 +27,130 @@
     [cljs.core.async.macros :as m :refer [go go-loop ]]))
 
 
+;;#######################################################
+;; Clojure Primer
+;;#######################################################
+
+(comment
+  
+  ;; S-exprs
+  (+ 1 2)
+  (+ 1 2 3 4 4)
+
+  (+ 1 (* 3 4))
+
+  ;; one.add(2)
+
+  ;; one.show()
+
+  ;; Binding
+  (let [x (+ 1 2)]
+    
+    (let [y (+ 1 x)]
+      
+      (+ x 1)))
 
 
+  (def x 1)
+
+  ;; Conditionals
+  (if (zero? 0)
+    (do
+      (- 1 2)
+      (+ 3 4))
+    2)
+
+
+
+  (cond
+    
+    (odd? 1) true
+    
+    (even? 2) false
+    
+    :else "shoe"
+
+    ;; Collections
+    #{1 2 3}
+    {:a 1
+     :b 2}
+
+    []
+    '(1 2 3)
+
+    ;; Functions
+    (def add-one
+      (fn [x]
+        (+ 1 x)))
+
+    (add-one 1)
+
+    (defn toast
+      [x]
+      (+ 1 x y))
+
+    (defn gen-adder
+      
+      [addend]
+      (fn [x y]
+        (+ x addend)))
+
+
+    ;; Multiple Arities
+
+    (defn toast
+      [x y & z] 
+      (println x)
+      (println y)
+      (println z)
+      (+ 2 3 x)))
+
+  ;; Tail-Call Optimization
+
+  (defn factorial
+    [n acc]
+    (if (zero? n)
+      acc
+      (factorial (- n 1) (* n acc))))
+
+  (defn factorial
+    [n]
+    (if (zero? n)
+      1
+      (* n (factorial (- n 1))))
+
+    ;; Higher Order Functions
+
+    (defn map+
+      [f ls]
+      (if (empty? ls)
+        '()
+        (cons (f (first ls))
+              (map+ f (rest ls)))))
+
+    (defn map+
+      [f ls acc]
+      (if (empty? ls)
+        acc
+        (recur f
+               (rest ls)
+               (cons (f (first ls)) acc))))))
+
+
+  ;; Macros
+
+  ;; Reference Types
+
+  ;; Polymorphism
+
+  ;; Hiccup
+
+  ;; Javascript Interop
 
 ;;#######################################################
 ;; Adding Ids, Values, Display Info
 ;;#######################################################
+
 
 (deftype Const [value meta*]
 
@@ -1723,6 +1841,7 @@
 
 (defn evaluate
   [form env]
+  
   (try
     
     (let [[form tag] (tag-form form)
@@ -1731,7 +1850,7 @@
           
           result (process-eval-result tag result)]
 
-      ;;(log-eval form result env)
+      (log-eval form result env)
 
       (trace tag form result env)
 
@@ -1747,7 +1866,8 @@
       (log-eval-error e form env))))
 
 (defn eval-in
-  [form] 
+  [form]
+  
   (binding [*global-env* (atom default-globals)]
     
     (evaluate form {:locals {}})))
